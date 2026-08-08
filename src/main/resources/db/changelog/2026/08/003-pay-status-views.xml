@@ -16,8 +16,8 @@
         CRG resolves a reply to its outbound batch by three paths, in precedence
         order: the resolved emission_id column; a legacy arm binding
         orgnl_msg_id = crw_emission.outbound_msg_id; and a no-emission family
-        fallback against tx_header.msg_id. PRG has TWO, because the first collapses
-        into the second:
+        fallback against tx_header.msg_id. PRG has TWO, because CRG's first two
+        become one when the column they differ over does not exist:
 
           1. orgnl_msg_id = prw_emission.outbound_msg_id  (the normal path)
           2. orgnl_msg_id = tx_header.msg_id, or a split child msg_id_N, for
@@ -28,6 +28,25 @@
         `resolved DESC` tiebreaker goes with it, since nothing can outrank anything.
         outbound_msg_id is globally unique (uq_prw_emission_outbound_msg), so path 1
         is exact, not heuristic.
+
+        THE TWO PATHS NEED TWO GUARDS, AND THEY GUARD DIFFERENT OBJECTS. CRG's *_fam
+        CTEs carry `r.emission_id IS NULL` (this REPLY is not batch-correlated) AND
+        `NOT EXISTS crw_emission for h2.arrival_id` (this ARRIVAL has no batch). Only
+        the second survives the column's removal by itself; the first has to be
+        rewritten, not dropped, and dropping it was a live defect caught in review.
+
+        The reason it bites HERE and not in collections is PRW: SplitPlanner mints
+        outbound_msg_id as source_msg_id, or source_msg_id + "_" + ordinal, which are
+        exactly the two shapes the family arm matches. So a reply correctly bound by
+        path 1 was ALSO absorbed by path 2 into any OTHER arrival whose msg_id it
+        matched, and that arrival needs no duplicate msg_id to qualify: msg_id "ACME"
+        is an underscore-delimited prefix of "ACME_20260808". A transaction DCRE never
+        emitted then projected as terminally settled, and the delta returned the e2e
+        twice, so the PSR carried a duplicate TX line.
+
+        Hence the reply-side guard below, rewritten in the vocabulary that exists here:
+        NOT EXISTS (prw_emission WHERE outbound_msg_id = r.orgnl_msg_id), meaning "no
+        batch claims this reply". Path 1 and path 2 are disjoint again.
 
         Path 2 in payments is a FIXTURE / no-registry safety net, not a legacy-data
         path: PRW writes its registry row before the file becomes visible, so a
@@ -122,6 +141,8 @@
                                       OR r.orgnl_msg_id LIKE h2.msg_id || '\_%'
                     WHERE NOT EXISTS (SELECT 1 FROM prw_emission pe
                                       WHERE pe.arrival_id = h2.arrival_id)
+                      AND NOT EXISTS (SELECT 1 FROM prw_emission pe2
+                                      WHERE pe2.outbound_msg_id = r.orgnl_msg_id)
             ),
             sbsr_fam AS (
                     SELECT h2.arrival_id, r.e2e, r.status,
@@ -133,6 +154,8 @@
                                       OR r.orgnl_msg_id LIKE h2.msg_id || '\_%'
                     WHERE NOT EXISTS (SELECT 1 FROM prw_emission pe
                                       WHERE pe.arrival_id = h2.arrival_id)
+                      AND NOT EXISTS (SELECT 1 FROM prw_emission pe2
+                                      WHERE pe2.outbound_msg_id = r.orgnl_msg_id)
             ),
             pbsr_fam AS (
                     SELECT h2.arrival_id, r.e2e, r.status,
@@ -144,6 +167,8 @@
                                       OR r.orgnl_msg_id LIKE h2.msg_id || '\_%'
                     WHERE NOT EXISTS (SELECT 1 FROM prw_emission pe
                                       WHERE pe.arrival_id = h2.arrival_id)
+                      AND NOT EXISTS (SELECT 1 FROM prw_emission pe2
+                                      WHERE pe2.outbound_msg_id = r.orgnl_msg_id)
             )
             SELECT t.arrival_id, t.sequence, t.e2e, h.client_token AS client,
                    me.outbound_msg_id, me.emission_id, g.source_msg_id,
@@ -274,10 +299,15 @@
          ext_tx_status so its deepest-leg choice and no-emission fallback remain the
          single status-projection authority. DCRE never translates an unknown code
          into a supported one and never instructs OnHost to resubmit until Fintegrate
-         confirms no processing or settlement occurred. -->
+         confirms no processing or settlement occurred.
+
+         client is cast to VARCHAR(16), matching the collections view and, more to the point,
+         matching the only value that can reach it: ext_tx_status.client is tx_header.client_token,
+         which PRR declares VARCHAR(16). A wider cast would advertise a width the data cannot
+         carry, on a view rpt consumes. -->
     <changeSet id="prg-003-status-exception-view" author="dcre" runOnChange="true">
         <createView viewName="prg_status_exception" replaceIfExists="true"><![CDATA[
-            SELECT x.client::VARCHAR(35) AS client,
+            SELECT x.client::VARCHAR(16) AS client,
                    COALESCE(x.source_msg_id, h.msg_id)::VARCHAR(35) AS source_msg_id,
                    x.outbound_msg_id::VARCHAR(64) AS outbound_msg_id,
                    x.e2e::VARCHAR(35) AS e2e, x.status::VARCHAR(32) AS status,

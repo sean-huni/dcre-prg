@@ -327,6 +327,66 @@ class ReportingSchemaIT {
         assertThat(extCount(a2, "E2ENUL")).isEqualTo(1L);
     }
 
+    /**
+     * The REPLY-side guard, and the reason it needs its own test rather than riding
+     * {@link #batchBoundAndFamilyBoundRepliesOfOneE2eNeverCrossLink}: that fixture uses MSGN1 and
+     * MSGN2, which are neither equal nor prefixes of one another, so its assertions hold whether
+     * the guard exists or not. It is named for this invariant and structurally cannot see it.
+     *
+     * <p>CRG's family arm carries TWO guards: {@code r.emission_id IS NULL} (no batch claims this
+     * REPLY) and {@code NOT EXISTS crw_emission for this ARRIVAL}. Only the second survives the
+     * column's removal unchanged. PRW mints outbound_msg_id as source_msg_id or
+     * source_msg_id + "_" + ordinal, which are exactly the two shapes the family arm matches, so
+     * without the rewritten reply-side guard one reply reaches every arrival whose msg_id it
+     * matches and an arrival DCRE never emitted projects as terminally settled.
+     *
+     * <p>Two fixtures, because only one of the two triggers needs a duplicate msg_id.
+     */
+    @Test
+    void aBatchBoundReplyNeverSettlesAnUnemittedArrivalSharingOrPrefixingItsMsgId() {
+        // (a) duplicate msg_id. The twin can NEVER acquire an emission, because
+        // uq_prw_group_client_msg is (client, source_msg_id), so it satisfies the
+        // arrival-side guard permanently rather than transiently.
+        final UUID dup1 = parent("FNBRF14", "MSGDUP");
+        tx(dup1, 1, "E2EDUP");
+        final UUID dupBatch = batch(group(dup1, "FNBRF14", "MSGDUP", 1), dup1, 1, "MSGDUP");
+        member(dupBatch, 1, "E2EDUP");
+        final UUID dup2 = parent("FNBRF14", "MSGDUP"); // same msg_id, never emitted
+        tx(dup2, 1, "E2EDUP");
+        respAt("pbsr_resp", dupBatch, "E2EDUP", "ACSC", "RESP_DUP_P1.xml", 0);
+
+        assertThat(ext(dup1, "E2EDUP").status()).isEqualTo("ACSC");
+        assertThat(ext(dup2, "E2EDUP").status())
+                .as("the reply is claimed by dup1's batch; dup2 was never emitted to Fintegrate"
+                        + " and must not project as settled")
+                .isEqualTo("CTV_PASS");
+
+        // (b) NO duplicate anywhere. An ordinary structured reference is an
+        // underscore-delimited prefix of another, which is all this variant needs.
+        final UUID pfx = parent("FNBRF15", "ACME");
+        tx(pfx, 1, "E2EPFX"); // never emitted
+        final UUID full = parent("FNBRF15", "ACME_20260808");
+        tx(full, 1, "E2EPFX");
+        final UUID fullBatch =
+                batch(group(full, "FNBRF15", "ACME_20260808", 1), full, 1, "ACME_20260808");
+        member(fullBatch, 1, "E2EPFX");
+        respAt("pbsr_resp", fullBatch, "E2EPFX", "ACSC", "RESP_PFX_P1.xml", 0);
+
+        assertThat(ext(full, "E2EPFX").status()).isEqualTo("ACSC");
+        assertThat(ext(pfx, "E2EPFX").status())
+                .as("ACME_20260808 is a separate arrival, not ACME's split child; a reply to it"
+                        + " must not settle ACME")
+                .isEqualTo("CTV_PASS");
+
+        // The downstream consequence, asserted on the VALUES rather than the row count: the count
+        // is 2 either way (one row per arrival), so only the statuses can tell the two worlds
+        // apart. Two ACSCs would mean the PSR carries the e2e twice as delivered.
+        assertThat(watermarks.findRangeSlice("FNBRF14", "", 10)).extracting(StatusRow::status)
+                .containsExactlyInAnyOrder("ACSC", "CTV_PASS");
+        assertThat(watermarks.findRangeSlice("FNBRF15", "", 10)).extracting(StatusRow::status)
+                .containsExactlyInAnyOrder("ACSC", "CTV_PASS");
+    }
+
     @Test
     void secondResponseFileForTheSameEmissionProjectsOnlyTheNewestStatus() {
         String client = "FNBRF06";

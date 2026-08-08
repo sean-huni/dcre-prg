@@ -162,17 +162,27 @@
 
     <!-- ============================ delta watermark ============================ -->
     <!-- Per-client delta watermark: the last externally reported status per e2e.
-         client is VARCHAR(35), not CRG's VARCHAR(16): the widest client identifier
-         reachable in dcre_pay is prw_emission_group.client (35), and PRG reads
-         client values out of that table through prg_report_due. Widening at v1 is
-         the same call PIX made on response_file (512 rather than CIX's 128) for the
-         same reason: a value that fits upstream must not crash the insert here. -->
+         client is VARCHAR(16), matching CRG.
+
+         An earlier draft widened it to 35 on the reasoning that prw_emission_group.client is 35
+         and PRG reads client out of that table through prg_report_due. That reasoning was a
+         correct description of a DIFFERENT problem and the wrong response to it. `client` has two
+         homes in dcre_pay: tx_header.client_token (VARCHAR(16), what ext_tx_status and every
+         PRG write path carry) and prw_emission_group.client, which PRW writes from
+         tx_header.initg_pty. They are equal only when an R-31 filename token was present, so a
+         NULL or differing client_token makes prg_report_due name a parent whose rows the
+         watermark reads cannot then select: the IMMEDIATE report emits nothing, nothing is
+         ledgered, the parent stays due and AGT retriggers it forever with no error anywhere.
+         Widening the column does not fix that; it removes the one configuration in which the
+         mismatch could have failed loudly. The narrow column stays, and the two-homes defect is
+         reported to the owner as a family-wide finding (it is inherited from CRG and also affects
+         MRG, so it is not PRG's to resolve unilaterally). -->
     <changeSet id="prg-002-watermark" author="dcre">
         <createTable tableName="prg_watermark">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
             </column>
-            <column name="client" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="client" type="VARCHAR(16)"><constraints nullable="false"/></column>
             <column name="e2e" type="VARCHAR(35)"><constraints nullable="false"/></column>
             <column name="last_status" type="VARCHAR(32)"><constraints nullable="false"/></column>
             <!-- BaseEntity (configuration.md point 20). -->
@@ -218,7 +228,7 @@
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
             </column>
-            <column name="client" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="client" type="VARCHAR(16)"><constraints nullable="false"/></column>
             <column name="type" type="VARCHAR(12)"><constraints nullable="false"/></column>
             <column name="trigger_kind" type="VARCHAR(16)"><constraints nullable="false"/></column>
             <column name="window_key" type="VARCHAR(64)"><constraints nullable="false"/></column>
@@ -253,7 +263,7 @@
                 <constraints primaryKey="true" nullable="false"/>
             </column>
             <column name="report_id" type="UUID"><constraints nullable="false"/></column>
-            <column name="client" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="client" type="VARCHAR(16)"><constraints nullable="false"/></column>
             <column name="e2e" type="VARCHAR(35)"><constraints nullable="false"/></column>
             <column name="status" type="VARCHAR(32)"><constraints nullable="false"/></column>
             <column name="manual_ref" type="VARCHAR(64)"/>
