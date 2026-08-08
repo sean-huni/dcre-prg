@@ -39,7 +39,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * summary WARN instead of a per-row WARN flood (CRW's hybrid choice).
  * Clients come from the FNBT pool top end; the BDD scenarios draw from 00 up.
  */
-@SpringBootTest(properties = {"spring.batch.job.enabled=false", "dcre.prg.psr-slice-size=10",
+@SpringBootTest(properties = {
+        "spring.liquibase.change-log=classpath:db/changelog/db.changelog-test-master.xml",
+        "spring.batch.job.enabled=false", "dcre.prg.psr-slice-size=10",
         "dcre.exchange-root=build/test-exchange", "DCRE_EXCHANGE_ROOT=build/test-exchange"})
 class PsrReportServiceSliceTest {
 

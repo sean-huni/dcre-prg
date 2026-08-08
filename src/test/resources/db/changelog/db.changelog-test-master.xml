@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- TEST MASTER. Not shipped: src/test only, selected by spring.liquibase.change-log
+         in the integration tests that need a populated dcre_pay.
+
+         It stands the read sources up first and then runs the PRODUCTION master
+         unchanged, by its production classpath path, so every production changeset keeps
+         its exact identity (id, author, filename) and the tests exercise the artifact
+         that ships rather than a copy of it. The only difference between a test database
+         and a real one is WHO created the nine relations PRG reads: the fixture here,
+         the owning services there.
+
+         Same shape as CRG's, deliberately. -->
+
+    <include file="db/changelog/test/001-read-sources.xml"/>
+    <include file="db/changelog/db.changelog-master.xml"/>
+
+</databaseChangeLog>

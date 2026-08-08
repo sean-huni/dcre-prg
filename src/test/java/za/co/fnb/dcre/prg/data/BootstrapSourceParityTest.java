@@ -22,15 +22,20 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The 001 bootstrap guard is a SECOND copy of nine tables PRG does not own, and its preconditions
- * are onFail="CONTINUE", so whichever service migrates second stands down silently. That makes
- * drift between the two copies invisible at runtime: no error, no log line, just a table whose
- * shape depends on which pod happened to start first. "Two places holding one fact: one is stale
- * and nothing tells you which."
+ * The test fixture is a SECOND copy of nine tables PRG does not own, so drift between the two
+ * copies is invisible: no error, no log line, just a suite that keeps passing against a shape its
+ * owner has already changed. "Two places holding one fact: one is stale and nothing tells you
+ * which."
  *
  * <p>This test is the thing that tells you which. It reads the OWNERS' changelogs off disk and
  * compares them, column by column and constraint by constraint, against this module's copy. It is
  * deliberately not a comment in the changelog saying the shapes match.
+ *
+ * <p>It survived the 2026-08-08 retirement of the shipped bootstrap guard, and matters MORE
+ * afterwards rather than less. Before, a shape mismatch produced a wrong table in production;
+ * now it produces a test fixture that lies about production, which is the failure mode nobody
+ * looks for. The one it caught immediately: {@code prw_emission_group.client} narrowed 35 -> 16
+ * when A-43 made {@code client_token} the authority.
  *
  * <p>It can only run inside the monorepo working tree, where the sibling modules exist beside this
  * one. A standalone clone of dcre-prg has no siblings to compare against, so the test ASSUMES its
@@ -53,11 +58,18 @@ class BootstrapSourceParityTest {
             "prw_emission", "prw",
             "prw_emission_member", "prw");
 
+    /**
+     * The TEST FIXTURE, since 2026-08-08. This file used to be a shipped bootstrap guard at
+     * src/main/resources/db/changelog/2026/08/001-pay-report-sources.xml; retiring it moved the
+     * mirror under src/test but did NOT remove the drift class, because the fixture is still a
+     * hand-maintained copy of other repositories' DDL and PRG's suite can still stay green against
+     * a shape its owner has already changed. CRG's equivalent fixture has only a comment saying so.
+     */
     private static final Path OWN_GUARD =
-            Path.of("src/main/resources/db/changelog/2026/08/001-pay-report-sources.xml");
+            Path.of("src/test/resources/db/changelog/test/001-read-sources.xml");
 
     @Test
-    void everyBootstrappedTableMatchesItsOwnersDeclarationColumnForColumn() throws Exception {
+    void everyMirroredTableMatchesItsOwnersDeclarationColumnForColumn() throws Exception {
         assumeMonorepo();
         final Document mine = parse(OWN_GUARD);
 
@@ -76,15 +88,15 @@ class BootstrapSourceParityTest {
                             + " exists to guard", table, ownerFile)
                     .isNotEmpty();
             assertThat(ours)
-                    .as("%s owns %s but the PRG bootstrap guard does not declare it, so a"
-                            + " clock-first migration would build its views over nothing",
+                    .as("%s owns %s but the PRG test fixture does not declare it, so this"
+                            + " module's integration tests have no source for their views",
                             entry.getValue(), table)
                     .containsExactlyInAnyOrderEntriesOf(theirs);
         }
     }
 
     @Test
-    void everyBootstrappedTableCarriesItsOwnersConstraintNames() throws Exception {
+    void everyMirroredTableCarriesItsOwnersConstraintNames() throws Exception {
         assumeMonorepo();
         final Document mine = parse(OWN_GUARD);
 
@@ -105,8 +117,8 @@ class BootstrapSourceParityTest {
     private void assumeMonorepo() {
         Assumptions.assumeTrue(Files.isDirectory(PAYMENTS.resolve("prr")),
                 "sibling payments modules are absent (standalone clone), so the owners'"
-                        + " declarations cannot be read; BootstrapOrderIT still covers"
-                        + " clock-first migration");
+                        + " declarations cannot be read; OrderingContractIT still covers the"
+                        + " ordering contract itself");
     }
 
     /** Finds the owner's changelog by SEARCHING for the createTable, never by a hardcoded path. */

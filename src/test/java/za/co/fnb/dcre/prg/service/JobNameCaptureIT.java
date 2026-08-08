@@ -35,7 +35,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * (the find-or-save restart no-op never overwrites it).
  * Own CockroachDB container per class; one configured client per kind.
  */
-@SpringBootTest(properties = {"spring.batch.job.enabled=false", "dcre.exchange-root=build/test-exchange",
+@SpringBootTest(properties = {
+        "spring.liquibase.change-log=classpath:db/changelog/db.changelog-test-master.xml",
+        "spring.batch.job.enabled=false", "dcre.exchange-root=build/test-exchange",
         "DCRE_EXCHANGE_ROOT=build/test-exchange"})
 class JobNameCaptureIT {
 

@@ -166,29 +166,53 @@ object is declared once in its final shape, and the re-run guards CRG's 53-chang
 are absent on purpose: no `validCheckSum ANY` on schema this project designs, no `MARK_RAN`
 preconditions over objects that cannot exist on an empty database, no defensive `IF NOT EXISTS`
 retrofits. `DATABASECHANGELOG` is what makes a re-run safe from a clean baseline, and
-`BootstrapOrderIT` executes that claim rather than asserting it.
+`OrderingContractIT` executes that claim rather than asserting it. There are no exceptions left:
+the batch metadata was the last one and became typed tags on 2026-08-08.
 
 | File | Contents |
 |---|---|
-| `001-pay-report-sources.xml` | BOOTSTRAP-ORDER GUARD: the nine tables PRG reads but does not own, plus PRG's read-path indexes on them |
-| `002-pay-reporting.xml` | `prg_status_class` (+14 seeded codes), `prg_watermark`, `prg_report`, `prg_delivery_ledger` |
+| `002-pay-reporting.xml` | `prg_status_class` (+14 seeded codes), `prg_watermark`, `prg_report`, `prg_delivery_ledger`, and PRG's read-path indexes on relations it reads |
 | `003-pay-status-views.xml` | `prg_isr_pick` / `prg_sbsr_pick` / `prg_pbsr_pick`, `ext_tx_status`, `prg_member_status`, `prg_report_due`, `prg_sla_pending`, `prg_status_exception` |
 | `004-batch-metadata.xml` | Spring Batch 6 metadata under prefix `PRG_BATCH_` |
 
-Two deliberate exceptions to the no-guards rule, both live requirements rather than history:
+### The ordering contract (2026-08-08)
 
-- **001 guards tables PRG does not own** with `onFail="CONTINUE"` (never `MARK_RAN`, per A-79/A-81).
-  PRG is clock-launched and can migrate before PRR/PTV/PRW/PIX/PSX/PPX have ever run, and
-  `CREATE VIEW` against an absent table crash-loops the pod with a partially applied changelog.
-  The cost is real and is not hidden: nine tables now have two declarations, and whichever service
-  runs second stands down silently, so drift between the copies would be invisible at runtime.
-  `BootstrapSourceParityTest` reads the owners' changelogs off disk and compares them column by
-  column and constraint by constraint. It runs only inside the monorepo working tree and says so
-  when it skips.
-- **004 vendors Spring Batch's own framework DDL**, which is multi-statement and non-transactional
-  on CockroachDB, so it genuinely needs `IF NOT EXISTS` to survive a mid-migration kill, and
-  `validCheckSum ANY` so a future edit to vendored framework DDL cannot fail validation on a
-  database that already carries PRG history (A-81, A-82; same call PRR/PRW/PIX made).
+PRG reads nine relations it does not own and **creates none of them**: `tx_header` + `tx_entry`
+(PRR), `validation_log` (PTV), `isr_resp` / `sbsr_resp` / `pbsr_resp` (PIX / PSX / PPX), and
+`prw_emission_group` / `prw_emission` / `prw_emission_member` (PRW).
+
+Until 2026-08-08 `001-pay-report-sources.xml` PRE-CREATED all nine behind `onFail="CONTINUE"`
+preconditions, because PRG is clock-launched and can migrate before any of those services has run.
+CRG carried the identical guard and retired it; PRG was forked from CRG before that retirement and
+inherited the anti-pattern without the fix. The guard made PRG a second writer of nine relations it
+does not own, it skipped SILENTLY so whichever service migrated second inherited the other's shape
+permanently and invisibly, and a PRG mint winning the race would crashloop the owner, whose own
+baseline creates those tables unguarded.
+
+**What guarantees the relations exist now.** `002`'s read-path indexes and `003`'s views name their
+relations by identifier, and CockroachDB resolves a view body at CREATE time, so a premature PRG
+migration FAILS, names the missing relation and leaves its changesets unapplied; the pod restarts,
+retries and converges the moment the owner has migrated. That is **not** the silent-zero shape
+(A-76, A-79): a view that was never created cannot be queried and return nothing. A `MARK_RAN`
+precondition WOULD reintroduce the silent shape by recording the skip permanently, which is why
+there is none. `OrderingContractIT` runs both directions: the shipped master against an empty
+database must throw and create no view, and the same master with the peers present must apply and
+execute every view.
+
+PRG's own integration tests get the nine relations from
+`src/test/resources/db/changelog/test/001-read-sources.xml`, reached via
+`db.changelog-test-master.xml`, which runs the fixture and then the PRODUCTION master by its
+production classpath path, so every production changeset keeps its exact identity. That fixture is
+still a hand-maintained mirror of other repositories' DDL, so `BootstrapSourceParityTest` reads the
+owners' changelogs off disk and compares them column by column and constraint by constraint. It
+runs only inside the monorepo working tree and says so when it skips.
+
+**Dependency worth naming:** `payments/pai` currently runs its Liquibase against `dcre_col` and
+creates `account`, `tx_header`, `tx_entry` and `pai_verdict` there. PRG reads `tx_header` and
+`tx_entry` in `dcre_pay` and depends on PRR creating them, not PAI; but until PAI's datasource is
+corrected, the payments database's spine has an owner writing into the wrong database, and that fix
+is a precondition for the ordering contract above being true in the cluster rather than only in the
+tests.
 
 ### Platform library dependencies (mavenLocal, 0.1.0)
 
@@ -257,12 +281,18 @@ Testcontainers CockroachDB `cockroachdb/cockroach:v26.2.3` (Docker required).
   R-38 WARN, unchanged window emits the zero-valued heartbeat, single status flip emits exactly
   that row, resend re-emits all current rows) plus the SCRUM-42 fail-closed unconfigured-client
   case.
-- `BootstrapOrderIT`: the v1 baseline's two structural claims, executed. PRG migrating first
-  against an empty database stands its whole view stack up and every view is actually queried; a
-  second full run of the changelog is a no-op; a source table an owner already created is left
-  alone rather than rewritten.
-- `BootstrapSourceParityTest`: the nine duplicated table declarations compared against the owners'
-  changelogs, column by column and constraint by constraint. Skips, loudly, outside the monorepo.
+- `OrderingContractIT`: the ordering contract, executed in both directions. The SHIPPED master
+  against an empty database must THROW, name the missing relation, and leave no peer table and no
+  view behind (a view that exists after a failed migration is a reader that returns zero rows
+  instead of an error); the same master with the peers present applies cleanly and every view is
+  actually queried, the catalogue seeds fourteen codes, and the three `PRG_BATCH_` sequences
+  survive the typed-tag conversion. A second full run is a no-op.
+- `BootstrapSourceParityTest`: the nine mirrored table declarations in the TEST FIXTURE compared
+  against the owners' changelogs, column by column and constraint by constraint. It matters more
+  after the retirement, not less: a stale mirror now produces a fixture that lies about production.
+  Skips, loudly, outside the monorepo.
+- `ClientAuthorityIT`: the only fixture in this module where `initg_pty` and `client_token` differ,
+  so the only one that can see which column `prw_emission_group.client` carries (A-43).
 - `PsrReportServiceSliceTest`: bounded-scan proofs (multi-slice delta to one correct streamed PSR,
   restart-with-existing-target still advances watermarks, summary WARN above the detail limit).
 - `PsrReportServiceRetryTest` / `PsrReportServiceAdvanceHonestyTest`: 40001 retry semantics of the

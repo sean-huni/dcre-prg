@@ -13,26 +13,62 @@
         This is NOT a port of CRG's 53-changeset history. Each object is declared once
         in its final shape, and the re-run guards that history required are absent on
         purpose. DATABASECHANGELOG is what makes a re-run safe from a clean baseline;
-        the guards CRG carries (validCheckSum ANY on designed schema, MARK_RAN
-        preconditions over pre-existing objects, IF-NOT-EXISTS on CREATEs) existed to
-        survive a migration that has now been abandoned, and reproducing them would be
-        exactly the hacking-around-Liquibase the owner has forbidden.
+        the guards CRG carried (validCheckSum ANY, MARK_RAN preconditions over
+        pre-existing objects, IF-NOT-EXISTS on CREATEs) existed to survive a migration
+        that has now been abandoned, and reproducing them would be exactly the
+        hacking-around-Liquibase the owner has forbidden. There are now NO exceptions:
+        the batch metadata was the last one and became typed tags on 2026-08-08.
 
-        Two deliberate exceptions, both of which are live requirements rather than
-        history:
-          - 001 guards tables PRG does NOT own with onFail="CONTINUE". PRG is
-            clock-launched and can migrate before PRR/PTV/PRW/PIX/PSX/PPX have ever
-            run, and CREATE VIEW against an absent table crash-loops the pod.
-          - 004 vendors Spring Batch's own framework DDL, which is multi-statement,
-            non-transactional on CockroachDB, and therefore genuinely needs
-            IF NOT EXISTS to survive a mid-migration kill.
+        ============================ THE ORDERING CONTRACT ============================
 
-        Order is load-bearing: sources, then owned tables (the views reference
-        prg_status_class and prg_delivery_ledger), then views, then batch metadata.
+        PRG READS nine relations it does not own, and creates none of them:
+
+          tx_header, tx_entry ........................... PRR
+          validation_log ................................ PTV
+          isr_resp / sbsr_resp / pbsr_resp .............. PIX / PSX / PPX
+          prw_emission_group / prw_emission /
+          prw_emission_member ........................... PRW
+
+        Until 2026-08-08 this changelog PRE-CREATED all nine behind onFail="CONTINUE"
+        preconditions, because PRG is clock-launched and can migrate on a fresh dcre_pay
+        before any of those services has ever run. CRG carried the identical guard, and
+        retired it; PRG was forked from CRG before that retirement and inherited the
+        anti-pattern without the fix. Two things were wrong with it:
+
+          - it made PRG a SECOND writer of nine relations it does not own. CONTINUE
+            skips SILENTLY, so whichever service migrated second inherited the other's
+            shape permanently and invisibly, and in the collections twin the mint had
+            already drifted from its owner;
+          - a PRG mint winning the race would crashloop the OWNER, whose own baseline
+            creates these tables unguarded. The guard prevented one failure by causing
+            a worse one.
+
+        WHAT GUARANTEES THE RELATIONS EXIST NOW, per destination:
+
+          - 002's read-path indexes and 003's views both name relations by identifier,
+            and CockroachDB resolves a view body at CREATE time. If PRG migrates first,
+            this changelog FAILS, names the missing relation, and leaves its changesets
+            unapplied. The pod restarts, retries, and converges the moment the owner has
+            migrated. That is loud, self-healing and visible in pod status.
+          - it is NOT the silent-zero shape (A-76, A-79). A missing relation cannot
+            produce an empty result here, because the object is never created at all;
+            there is no view to query and return nothing. The failure this changelog can
+            have is a crash, and a crash is a bad outcome with a good property, which is
+            that somebody finds out. A MARK_RAN precondition WOULD reintroduce the silent
+            shape by recording the skip permanently, which is why there is none.
+          - PRG's own integration tests need the same relations, and get them from
+            src/test/resources/db/changelog/test/001-read-sources.xml via
+            db.changelog-test-master.xml, which runs the fixture and then THIS master by
+            its production classpath path, so every production changeset keeps its exact
+            identity and the tests exercise the artifact that ships.
+          - the fixture is a hand-maintained mirror of other repositories' DDL, which is
+            a drift class. BootstrapSourceParityTest reads the OWNERS' changelogs off
+            disk and compares them column by column, so the mirror is a checked fact
+            rather than a remembered one.
+
+        Order is load-bearing: owned tables (the views reference prg_status_class and
+        prg_delivery_ledger), then views, then batch metadata.
     -->
-    <include file="db/changelog/2026/08/001-pay-report-sources.xml"/>
-    <include file="db/changelog/2026/08/002-pay-reporting.xml"/>
-    <include file="db/changelog/2026/08/003-pay-status-views.xml"/>
-    <include file="db/changelog/2026/08/004-batch-metadata.xml"/>
+    <include file="db/changelog/2026/08/db.changelog-2026-08.xml"/>
 
 </databaseChangeLog>

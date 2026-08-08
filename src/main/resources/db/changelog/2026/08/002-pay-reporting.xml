@@ -27,9 +27,12 @@
             the skip PERMANENTLY (A-79, A-81);
           - no defensive IF-NOT-EXISTS retrofits: DATABASECHANGELOG is what makes a
             re-run safe from a clean baseline, and it is sufficient on its own.
-        Contrast 001, whose CONTINUE preconditions guard tables PRG does NOT own and
-        which therefore CAN legitimately already exist on a partially bootstrapped
-        database. That is a different problem with a different answer.
+        There is no longer a contrast to draw with a bootstrap guard: on 2026-08-08 the
+        nine relations PRG READS but does not own stopped being created here at all
+        (see the ordering contract in db.changelog-master.xml). The read-path indexes at
+        the end of this file are the one thing PRG still declares on another service's
+        table, and they are a DECLARATION rather than a mint: an index cannot bring a
+        missing table into being, so it fails loudly exactly like the views do.
 
         Table names keep the prg_ prefix, which here names the OWNING SERVICE rather
         than being inherited baggage: in dcre_col those objects belong to CRG under
@@ -162,21 +165,27 @@
 
     <!-- ============================ delta watermark ============================ -->
     <!-- Per-client delta watermark: the last externally reported status per e2e.
-         client is VARCHAR(16), matching CRG.
+         client is VARCHAR(16), matching CRG, tx_header.client_token and (since A-43)
+         prw_emission_group.client.
 
-         An earlier draft widened it to 35 on the reasoning that prw_emission_group.client is 35
+         An earlier draft widened it to 35 on the reasoning that prw_emission_group.client was 35
          and PRG reads client out of that table through prg_report_due. That reasoning was a
-         correct description of a DIFFERENT problem and the wrong response to it. `client` has two
-         homes in dcre_pay: tx_header.client_token (VARCHAR(16), what ext_tx_status and every
-         PRG write path carry) and prw_emission_group.client, which PRW writes from
-         tx_header.initg_pty. They are equal only when an R-31 filename token was present, so a
-         NULL or differing client_token makes prg_report_due name a parent whose rows the
-         watermark reads cannot then select: the IMMEDIATE report emits nothing, nothing is
-         ledgered, the parent stays due and AGT retriggers it forever with no error anywhere.
-         Widening the column does not fix that; it removes the one configuration in which the
-         mismatch could have failed loudly. The narrow column stays, and the two-homes defect is
-         reported to the owner as a family-wide finding (it is inherited from CRG and also affects
-         MRG, so it is not PRG's to resolve unilaterally). -->
+         correct description of a DIFFERENT problem and the wrong response to it: `client` had two
+         homes in dcre_pay, tx_header.client_token (what ext_tx_status and every PRG write path
+         carry) and prw_emission_group.client, which PRW wrote from tx_header.initg_pty. They were
+         equal only when an R-31 filename token was present, so a NULL or differing client_token
+         made prg_report_due name a parent whose rows the watermark reads could not then select:
+         the IMMEDIATE report emits nothing, nothing is ledgered, the parent stays due and AGT
+         retriggers it forever with no error anywhere. Widening the column would not have fixed
+         that; it would have removed the one configuration in which the mismatch could fail loudly.
+
+         RESOLVED at the source, 2026-08-08 (A-43): the owner ruled tx_header.client_token the
+         authority, PRW now writes prw_emission_group.client from it (COALESCE with initg_pty for
+         an arrival that carried no filename token) and narrowed that column to 16 to match. The
+         two homes are now one authority with a documented fallback. The narrow column here was
+         right for the wrong reason and is now right for the right one. PRG's ClientAuthorityIT is
+         the fixture that can tell the difference; every other fixture in this module seeds both
+         columns to one value and cannot. -->
     <changeSet id="prg-002-watermark" author="dcre">
         <createTable tableName="prg_watermark">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
@@ -288,6 +297,44 @@
         <rollback>
             <dropIndex tableName="prg_delivery_ledger" indexName="uq_prg_ledger_auto"/>
         </rollback>
+    </changeSet>
+
+    <!-- SCRUM-55 perf lesson, carried because the cause is structural rather than
+         historical: without these the pick views degrade to nested-loop lookups per
+         transaction row, which hung the live AGT trigger scan for 7+ minutes on a
+         12,001-tx parent. They sit on tables PRG does not own, which is why they
+         carry the prg_ prefix and are declared here rather than in PIX/PSX/PPX. This is the
+         shape CRG uses (002-reporting-tables.xml): PRG DECLARES indexes it needs on
+         relations it reads, and creates no relation it does not own. The index changesets
+         carry no presence guard, for the same reason the views do not: they run after the
+         owners' migrations, and a missing table fails loudly and names itself. -->
+
+    <changeSet id="prg-001-ix-isr-orgnl-e2e" author="dcre">
+        <createIndex tableName="isr_resp" indexName="ix_prg_isr_orgnl_e2e">
+            <column name="orgnl_msg_id"/><column name="e2e"/><column name="created_at"/>
+        </createIndex>
+        <rollback><dropIndex tableName="isr_resp" indexName="ix_prg_isr_orgnl_e2e"/></rollback>
+    </changeSet>
+
+    <changeSet id="prg-001-ix-sbsr-orgnl-e2e" author="dcre">
+        <createIndex tableName="sbsr_resp" indexName="ix_prg_sbsr_orgnl_e2e">
+            <column name="orgnl_msg_id"/><column name="e2e"/><column name="created_at"/>
+        </createIndex>
+        <rollback><dropIndex tableName="sbsr_resp" indexName="ix_prg_sbsr_orgnl_e2e"/></rollback>
+    </changeSet>
+
+    <changeSet id="prg-001-ix-pbsr-orgnl-e2e" author="dcre">
+        <createIndex tableName="pbsr_resp" indexName="ix_prg_pbsr_orgnl_e2e">
+            <column name="orgnl_msg_id"/><column name="e2e"/><column name="created_at"/>
+        </createIndex>
+        <rollback><dropIndex tableName="pbsr_resp" indexName="ix_prg_pbsr_orgnl_e2e"/></rollback>
+    </changeSet>
+
+    <changeSet id="prg-001-ix-emission-group" author="dcre">
+        <createIndex tableName="prw_emission" indexName="ix_prg_emission_group">
+            <column name="group_id"/>
+        </createIndex>
+        <rollback><dropIndex tableName="prw_emission" indexName="ix_prg_emission_group"/></rollback>
     </changeSet>
 
 </databaseChangeLog>

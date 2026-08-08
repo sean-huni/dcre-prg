@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Sub-master for 2026/08: the month that carries the PRG v1 baseline. The root
+         master includes MONTHS, never individual changesets, so a new month is one line
+         in the root and every changeset within a month stays ordered here. Same layout
+         as CRG's, which PRG was forked from before that layout landed.
+
+         The order is the dependency order and is not cosmetic: 003's views resolve
+         002's catalogue at CREATE time, and CockroachDB resolves a view body when the
+         view is created rather than when it is queried. The file NUMBERS are kept as
+         they were rather than renumbered to match CRG's part-N scheme, because a
+         changeset's identity is (id, author, FILENAME) and renaming buys nothing here. -->
+
+    <include file="db/changelog/2026/08/002-pay-reporting.xml"/>
+    <include file="db/changelog/2026/08/003-pay-status-views.xml"/>
+    <include file="db/changelog/2026/08/004-batch-metadata.xml"/>
+
+</databaseChangeLog>

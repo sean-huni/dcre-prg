@@ -9,7 +9,9 @@ import org.testcontainers.utility.DockerImageName;
 
 /** Same bootstrap as PrgJobTest: batch launch disabled, exchange under build/, static CRDB. */
 @CucumberContextConfiguration
-@SpringBootTest(properties = {"spring.batch.job.enabled=false", "dcre.exchange-root=build/test-exchange",
+@SpringBootTest(properties = {
+        "spring.liquibase.change-log=classpath:db/changelog/db.changelog-test-master.xml",
+        "spring.batch.job.enabled=false", "dcre.exchange-root=build/test-exchange",
         "DCRE_EXCHANGE_ROOT=build/test-exchange"})
 public class CucumberSpringConfig {
 
