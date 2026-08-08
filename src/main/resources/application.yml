@@ -1,0 +1,64 @@
+# 12FactorApp: committed working dev defaults; env overrides. (yml-only rule, configuration.md p19)
+spring:
+  # SCRUM-42: per-client exchange layout, shipped once as a shared classpath resource in
+  # platform-batch and imported by each writer service; drives the ExchangeLayout bean.
+  config:
+    import: classpath:dcre-exchange-layout.yml
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    # dcre_pay, NOT dcre_col: the payments split gives this family its own database,
+    # and that database is now the family discriminator. PRG reads the payments
+    # response cylinders (isr_resp / sbsr_resp / pbsr_resp, written by PIX/PSX/PPX),
+    # the payments spine (tx_header / tx_entry / validation_log) and the payments
+    # emission registry (prw_emission*), all in dcre_pay. It never opens dcre_col.
+    url: ${DCRE_PAY_DB_URL:jdbc:postgresql://localhost:26257/dcre_pay?sslmode=disable}
+    username: ${DCRE_PAY_DB_USER:root}
+    password: ${DCRE_PAY_DB_PASSWORD:}
+    hikari:
+      # SCRUM-90, inherited from CRG for the same measured reason, not by habit: a
+      # report generator is the only stage whose CONCURRENT clock windows collide at
+      # the Batch-6 persistent-JobRepository chunk commit with an uncatchable 40001
+      # (RETRY_SERIALIZABLE). READ COMMITTED removes it, and PRG's writes stay
+      # zero-duplicate because both are full-identity guarded upserts:
+      # prg_watermark ON CONFLICT (client, e2e) and the uq_prg_ledger_auto partial index.
+      # It is NOT fleet-wide: ptv/rpt use cluster_logical_timestamp() / AS OF SYSTEM
+      # TIME, which CockroachDB supports only under SERIALIZABLE. PRG issues neither.
+      transaction-isolation: TRANSACTION_READ_COMMITTED
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.xml
+    # Per-service migration history on the shared dcre_pay DB (same isolation idea
+    # as PRG_BATCH_). This is a NEW history table on a NEW database: it can never
+    # collide with the collections report generator's prg_databasechangelog, which
+    # lives in dcre_col and belongs to CRG.
+    database-change-log-table: prg_databasechangelog
+    database-change-log-lock-table: prg_databasechangeloglock
+
+dcre:
+  batch:
+    table-prefix: PRG_BATCH_
+  # SCRUM-88 (M12): second read-write datasource for the HeartbeatWriter liveness
+  # stamp on agt_ops.launch_intent (HeartbeatDatasourceConfig). agt_ops is AGT's
+  # database and is shared by every family; it is NOT part of the pay split.
+  agtops-db-url: ${DCRE_AGTOPS_DB_URL:jdbc:postgresql://localhost:26257/agt_ops?sslmode=disable}
+  agtops-db-user: ${DCRE_AGTOPS_DB_USER:root}
+  agtops-db-password: ${DCRE_AGTOPS_DB_PASSWORD:}
+  # Six ../ from a service directory: payments/prg -> payments -> dcre -> spring ->
+  # java -> be -> repo, landing on repo/infra/dcre-infra/exchange. Verified with
+  # realpath, not by counting segments (ConfigPlaceholderBindingTest re-checks it).
+  exchange-root: ${DCRE_EXCHANGE_ROOT:../../../../../../infra/dcre-infra/exchange}
+  amount-scale: ${DCRE_AMOUNT_SCALE:2}
+  v1-enabled: ${DCRE_V1_ENABLED:false}
+  flow-dc: ${DCRE_FLOW_DC:false}
+  prg:
+    # SCRUM-42: whole-book reads + a full in-heap render blew CRDB's sql memory
+    # budget on the 30M-tx book; PSR reads, streaming emission and watermark
+    # advances all run in bounded keyset slices of this size.
+    #
+    # The Java side reads dcre.prg.psr-slice-size with a CONSTANT default of 50000,
+    # so a prefix rename that moved the Java placeholder and left this key behind
+    # would bind nothing, fall silently to 50000 and still build exit 0.
+    # ConfigPlaceholderBindingTest asserts this key is PRESENT in the environment,
+    # never merely that the lookup returns a number.
+    psr-slice-size: ${DCRE_PRG_PSR_SLICE_SIZE:50000}

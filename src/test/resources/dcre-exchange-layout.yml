@@ -1,0 +1,40 @@
+# SCRUM-42 TEST layout: shadows the platform-batch classpath resource of the same name so
+# `spring.config.import: classpath:dcre-exchange-layout.yml` binds these values under test.
+# root -> build/test-exchange (per-client tree materialized there); PSR lands at
+# <root>/<base>/onhost-resp/out/<client>_PSR_<window>.txt. The three canonical fleet clients
+# mirror production; FNBT00..FNBT15 is an isolation pool so each BDD scenario draws a distinct
+# configured client (the view partitions by client, response joins on e2e, and batch job
+# identity is (client, window) -- a shared client would collide on all three).
+dcre:
+  exchange:
+    # Activation marker for ExchangeAutoConfiguration, mirroring the shipped resource this
+    # file shadows: since the 2026-07-14 fleet fix the autoconfig backs off without it.
+    enabled: true
+    root: ${DCRE_EXCHANGE_ROOT:build/test-exchange}
+    clients:
+      "[FNBCC01]":
+        onhost-req:      { in: fnbcc01/onhost-req/in,      error: fnbcc01/onhost-req/error,      archive: fnbcc01/onhost-req/archive }
+        onhost-req-endo: { in: fnbcc01/onhost-req-endo/in, error: fnbcc01/onhost-req-endo/error, archive: fnbcc01/onhost-req-endo/archive }
+        onhost-resp:     { out: fnbcc01/onhost-resp/out,   error: fnbcc01/onhost-resp/error,     archive: fnbcc01/onhost-resp/archive }
+        fint-req:        { out: fnbcc01/fint-req/out,       error: fnbcc01/fint-req/error,        archive: fnbcc01/fint-req/archive }
+        fint-resp:       { in: fnbcc01/fint-resp/in,        error: fnbcc01/fint-resp/error,       archive: fnbcc01/fint-resp/archive }
+      "[FNBCC02]":
+        onhost-resp:     { out: fnbcc02/onhost-resp/out,   error: fnbcc02/onhost-resp/error,     archive: fnbcc02/onhost-resp/archive }
+      "[FNBRF01]":
+        onhost-resp:     { out: fnbrf01/onhost-resp/out,   error: fnbrf01/onhost-resp/error,     archive: fnbrf01/onhost-resp/archive }
+      "[FNBT00]": { onhost-resp: { out: fnbt00/onhost-resp/out, error: fnbt00/onhost-resp/error, archive: fnbt00/onhost-resp/archive } }
+      "[FNBT01]": { onhost-resp: { out: fnbt01/onhost-resp/out, error: fnbt01/onhost-resp/error, archive: fnbt01/onhost-resp/archive } }
+      "[FNBT02]": { onhost-resp: { out: fnbt02/onhost-resp/out, error: fnbt02/onhost-resp/error, archive: fnbt02/onhost-resp/archive } }
+      "[FNBT03]": { onhost-resp: { out: fnbt03/onhost-resp/out, error: fnbt03/onhost-resp/error, archive: fnbt03/onhost-resp/archive } }
+      "[FNBT04]": { onhost-resp: { out: fnbt04/onhost-resp/out, error: fnbt04/onhost-resp/error, archive: fnbt04/onhost-resp/archive } }
+      "[FNBT05]": { onhost-resp: { out: fnbt05/onhost-resp/out, error: fnbt05/onhost-resp/error, archive: fnbt05/onhost-resp/archive } }
+      "[FNBT06]": { onhost-resp: { out: fnbt06/onhost-resp/out, error: fnbt06/onhost-resp/error, archive: fnbt06/onhost-resp/archive } }
+      "[FNBT07]": { onhost-resp: { out: fnbt07/onhost-resp/out, error: fnbt07/onhost-resp/error, archive: fnbt07/onhost-resp/archive } }
+      "[FNBT08]": { onhost-resp: { out: fnbt08/onhost-resp/out, error: fnbt08/onhost-resp/error, archive: fnbt08/onhost-resp/archive } }
+      "[FNBT09]": { onhost-resp: { out: fnbt09/onhost-resp/out, error: fnbt09/onhost-resp/error, archive: fnbt09/onhost-resp/archive } }
+      "[FNBT10]": { onhost-resp: { out: fnbt10/onhost-resp/out, error: fnbt10/onhost-resp/error, archive: fnbt10/onhost-resp/archive } }
+      "[FNBT11]": { onhost-resp: { out: fnbt11/onhost-resp/out, error: fnbt11/onhost-resp/error, archive: fnbt11/onhost-resp/archive } }
+      "[FNBT12]": { onhost-resp: { out: fnbt12/onhost-resp/out, error: fnbt12/onhost-resp/error, archive: fnbt12/onhost-resp/archive } }
+      "[FNBT13]": { onhost-resp: { out: fnbt13/onhost-resp/out, error: fnbt13/onhost-resp/error, archive: fnbt13/onhost-resp/archive } }
+      "[FNBT14]": { onhost-resp: { out: fnbt14/onhost-resp/out, error: fnbt14/onhost-resp/error, archive: fnbt14/onhost-resp/archive } }
+      "[FNBT15]": { onhost-resp: { out: fnbt15/onhost-resp/out, error: fnbt15/onhost-resp/error, archive: fnbt15/onhost-resp/archive } }

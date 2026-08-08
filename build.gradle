@@ -1,0 +1,56 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.1.0'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+group = 'za.co.fnb.dcre'
+version = '2.0'
+java {
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}
+repositories { mavenCentral(); mavenLocal() }
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-batch'
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jdbc'
+    implementation 'za.co.fnb.dcre:platform-persistence:0.1.0'
+    // Declared explicitly although platform-batch api-exposes it: PRG imports
+    // ExchangeLayout/ExchangeChannel/ExchangeSub directly, and a direct import
+    // on a transitive dependency breaks silently when the exposing module
+    // changes its own dependency scope.
+    implementation 'za.co.fnb.dcre:platform-files:0.1.0'
+    implementation 'org.liquibase:liquibase-core'
+    implementation 'org.springframework.boot:spring-boot-liquibase'
+    implementation 'za.co.fnb.dcre:platform-batch:0.1.0'
+    runtimeOnly 'org.postgresql:postgresql'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.batch:spring-batch-test'
+    testImplementation 'org.testcontainers:cockroachdb:1.21.4'
+    testImplementation platform('io.cucumber:cucumber-bom:7.22.1')
+    testImplementation 'io.cucumber:cucumber-java'
+    testImplementation 'io.cucumber:cucumber-spring'
+    testImplementation 'io.cucumber:cucumber-junit-platform-engine'
+    testImplementation 'org.junit.platform:junit-platform-suite'
+}
+test { useJUnitPlatform() }
+
+/*
+ * Paketo buildpacks, NOT a hand-rolled prod JVM Dockerfile (estate mandate:
+ * "ALL backend images via Paketo, never a prod JVM Dockerfile; BP_JVM_VERSION=25
+ * mandatory"). PRG follows PRR/PRW/PIX: a brand-new repo with no published image
+ * and no rollback to preserve is the cheapest adoption point, so the payments
+ * family is Paketo from its first tag. CRG's hand-rolled eclipse-temurin
+ * Dockerfile is deliberately NOT carried across.
+ *
+ * imageName has no registry prefix on purpose: dcre images are loaded straight
+ * into the kind node with `kind load docker-image`, matching dcre-<svc>:<tag>.
+ */
+tasks.named('bootBuildImage') {
+    imageName = "dcre-prg:${project.version}"
+    // BOTH keys pinned on purpose (rules/be/java/build.md): leaving the builder
+    // unset resolves via the Boot plugin's FLOATING default, so a plugin bump
+    // would silently change the base image.
+    builder = 'paketobuildpacks/builder-noble-java-tiny'
+    environment = ['BP_JVM_VERSION': '25']
+}

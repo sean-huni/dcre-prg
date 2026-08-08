@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        PRG's OWN tables in dcre_pay. PRG is their single writer (R-04).
+
+        V1 BASELINE. dcre_pay is a new database being cut over directly, so this file
+        declares the FINAL shape of each object in one typed changeset instead of
+        replaying how CRG got there. Concretely, CRG reaches this same state through
+        53 changesets across five files: prg_status_class is created with two columns
+        and then gains classification, reportable and sla_suppressed by three
+        addColumn + backfill + addNotNullConstraint triples; ACWC/ACWP are inserted as
+        UNSUPPORTED by 004 and corrected to accepted-warehoused by 005; prg_report
+        gains job_name by a later ALTER. None of that history exists here and none of
+        it is reproduced.
+
+        The usual re-run guards are therefore ABSENT BY DESIGN, and that absence is
+        the point rather than an oversight:
+          - no <validCheckSum>ANY</validCheckSum>: nothing has executed these
+            changesets anywhere, so no checksum can have drifted;
+          - no MARK_RAN preconditions guarding objects that "might already exist":
+            on an empty database they cannot, and a MARK_RAN that fires once records
+            the skip PERMANENTLY (A-79, A-81);
+          - no defensive IF-NOT-EXISTS retrofits: DATABASECHANGELOG is what makes a
+            re-run safe from a clean baseline, and it is sufficient on its own.
+        Contrast 001, whose CONTINUE preconditions guard tables PRG does NOT own and
+        which therefore CAN legitimately already exist on a partially bootstrapped
+        database. That is a different problem with a different answer.
+
+        Table names keep the prg_ prefix, which here names the OWNING SERVICE rather
+        than being inherited baggage: in dcre_col those objects belong to CRG under
+        its former name, in dcre_pay they belong to PRG under its actual one. Two
+        databases, so the two sets can never collide.
+    -->
+
+    <!-- ===================== R-21 status catalogue (reference table) =========== -->
+    <!-- R-21: status classes live in a reference table, never in an enum. All
+         fourteen recognised Fintegrate codes are explicit and fully classified at
+         v1; an unrecognised code is NOT listed, LEFT JOINs to NULL and fails closed
+         as a non-reportable protocol exception (prg_status_exception).
+
+         ACWP/ACWC are carried even though payments cannot warehouse. They are RMB
+         DebiCheck codes for future-dated and auto-bumped COLLECTIONS, and PRW's own
+         changelog records that ENDO has no collection day at all, so they are not
+         expected on this leg. They are listed anyway because the alternative is
+         worse: an unlisted code that does arrive would be silently suppressed from
+         every PSR as an unknown, and a catalogue that classifies a code it never
+         sees costs nothing. -->
+    <changeSet id="prg-002-status-class" author="dcre">
+        <createTable tableName="prg_status_class">
+            <column name="code" type="VARCHAR(8)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="terminal" type="BOOLEAN"><constraints nullable="false"/></column>
+            <column name="classification" type="VARCHAR(32)"><constraints nullable="false"/></column>
+            <column name="reportable" type="BOOLEAN"><constraints nullable="false"/></column>
+            <!-- A tx whose latest status is accepted-warehoused HAS its response and
+                 must not age on the 20h/24h pending-SLA path (SCRUM-68). -->
+            <column name="sla_suppressed" type="BOOLEAN"><constraints nullable="false"/></column>
+        </createTable>
+        <rollback><dropTable tableName="prg_status_class"/></rollback>
+    </changeSet>
+
+    <changeSet id="prg-002-status-class-seed" author="dcre">
+        <!-- Terminal success -->
+        <insert tableName="prg_status_class">
+            <column name="code" value="ACSC"/><column name="terminal" valueBoolean="true"/>
+            <column name="classification" value="TERMINAL_SUCCESS"/>
+            <column name="reportable" valueBoolean="true"/>
+            <column name="sla_suppressed" valueBoolean="false"/>
+        </insert>
+        <insert tableName="prg_status_class">
+            <column name="code" value="ACCC"/><column name="terminal" valueBoolean="true"/>
+            <column name="classification" value="TERMINAL_SUCCESS"/>
+            <column name="reportable" valueBoolean="true"/>
+            <column name="sla_suppressed" valueBoolean="false"/>
+        </insert>
+        <!-- Terminal non-success -->
+        <insert tableName="prg_status_class">
+            <column name="code" value="RJCT"/><column name="terminal" valueBoolean="true"/>
+            <column name="classification" value="TERMINAL_NON_SUCCESS"/>
+            <column name="reportable" valueBoolean="true"/>
+            <column name="sla_suppressed" valueBoolean="false"/>
+        </insert>
+        <insert tableName="prg_status_class">
+            <column name="code" value="CANC"/><column name="terminal" valueBoolean="true"/>
+            <column name="classification" value="TERMINAL_NON_SUCCESS"/>
+            <column name="reportable" valueBoolean="true"/>
+            <column name="sla_suppressed" valueBoolean="false"/>
+        </insert>
+        <!-- Accepted, non-terminal -->
+        <insert tableName="prg_status_class">
+            <column name="code" value="ACSP"/><column name="terminal" valueBoolean="false"/>
+            <column name="classification" value="ACCEPTED_NON_TERMINAL"/>
+            <column name="reportable" valueBoolean="true"/>
+            <column name="sla_suppressed" valueBoolean="false"/>
+        </insert>
+        <insert tableName="prg_status_class">
+            <column name="code" value="ACTC"/><column name="terminal" valueBoolean="false"/>
+            <column name="classification" value="ACCEPTED_NON_TERMINAL"/>
+            <column name="reportable" valueBoolean="true"/>
+            <column name="sla_suppressed" valueBoolean="false"/>
+        </insert>
+        <insert tableName="prg_status_class">
+            <column name="code" value="ACCP"/><column name="terminal" valueBoolean="false"/>
+            <column name="classification" value="ACCEPTED_NON_TERMINAL"/>
+            <column name="reportable" valueBoolean="true"/>
+            <column name="sla_suppressed" valueBoolean="false"/>
+        </insert>
+        <insert tableName="prg_status_class">
+            <column name="code" value="ACFC"/><column name="terminal" valueBoolean="false"/>
+            <column name="classification" value="ACCEPTED_NON_TERMINAL"/>
+            <column name="reportable" valueBoolean="true"/>
+            <column name="sla_suppressed" valueBoolean="false"/>
+        </insert>
+        <!-- Pending / interim -->
+        <insert tableName="prg_status_class">
+            <column name="code" value="RCVD"/><column name="terminal" valueBoolean="false"/>
+            <column name="classification" value="PENDING_INTERIM"/>
+            <column name="reportable" valueBoolean="true"/>
+            <column name="sla_suppressed" valueBoolean="false"/>
+        </insert>
+        <insert tableName="prg_status_class">
+            <column name="code" value="PDNG"/><column name="terminal" valueBoolean="false"/>
+            <column name="classification" value="PENDING_INTERIM"/>
+            <column name="reportable" valueBoolean="true"/>
+            <column name="sla_suppressed" valueBoolean="false"/>
+        </insert>
+        <insert tableName="prg_status_class">
+            <column name="code" value="PART"/><column name="terminal" valueBoolean="false"/>
+            <column name="classification" value="PENDING_INTERIM"/>
+            <column name="reportable" valueBoolean="true"/>
+            <column name="sla_suppressed" valueBoolean="false"/>
+        </insert>
+        <insert tableName="prg_status_class">
+            <column name="code" value="PATC"/><column name="terminal" valueBoolean="false"/>
+            <column name="classification" value="PENDING_INTERIM"/>
+            <column name="reportable" valueBoolean="true"/>
+            <column name="sla_suppressed" valueBoolean="false"/>
+        </insert>
+        <!-- Accepted warehoused: reportable, SLA-suppressed (SCRUM-68) -->
+        <insert tableName="prg_status_class">
+            <column name="code" value="ACWC"/><column name="terminal" valueBoolean="false"/>
+            <column name="classification" value="ACCEPTED_NON_TERMINAL"/>
+            <column name="reportable" valueBoolean="true"/>
+            <column name="sla_suppressed" valueBoolean="true"/>
+        </insert>
+        <insert tableName="prg_status_class">
+            <column name="code" value="ACWP"/><column name="terminal" valueBoolean="false"/>
+            <column name="classification" value="ACCEPTED_NON_TERMINAL"/>
+            <column name="reportable" valueBoolean="true"/>
+            <column name="sla_suppressed" valueBoolean="true"/>
+        </insert>
+        <rollback>
+            <delete tableName="prg_status_class"/>
+        </rollback>
+    </changeSet>
+
+    <!-- ============================ delta watermark ============================ -->
+    <!-- Per-client delta watermark: the last externally reported status per e2e.
+         client is VARCHAR(35), not CRG's VARCHAR(16): the widest client identifier
+         reachable in dcre_pay is prw_emission_group.client (35), and PRG reads
+         client values out of that table through prg_report_due. Widening at v1 is
+         the same call PIX made on response_file (512 rather than CIX's 128) for the
+         same reason: a value that fits upstream must not crash the insert here. -->
+    <changeSet id="prg-002-watermark" author="dcre">
+        <createTable tableName="prg_watermark">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="client" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="e2e" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="last_status" type="VARCHAR(32)"><constraints nullable="false"/></column>
+            <!-- BaseEntity (configuration.md point 20). -->
+            <column name="version" type="BIGINT" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <rollback><dropTable tableName="prg_watermark"/></rollback>
+    </changeSet>
+
+    <!-- The FULL business identity of a watermark row. CockroachDB resolves UPSERT
+         on the PRIMARY KEY only, so the writer's
+         INSERT ... ON CONFLICT (client, e2e) DO UPDATE needs this constraint to
+         exist, or a restarted advance duplicates instead of rewriting. -->
+    <changeSet id="prg-002-watermark-identity" author="dcre">
+        <addUniqueConstraint tableName="prg_watermark" columnNames="client, e2e"
+                             constraintName="uq_prg_watermark_client_e2e"/>
+        <rollback>
+            <dropUniqueConstraint tableName="prg_watermark"
+                                  constraintName="uq_prg_watermark_client_e2e"/>
+        </rollback>
+    </changeSet>
+
+    <!-- ============================ report registry ============================ -->
+    <!-- One row per emitted report artifact. Append-only: no version/updated_at, so
+         the entity rides Persistable rather than the @Version new-ness heuristic.
+
+         COLUMN NAME: `type`, not CRG's `report_type`. A column never repeats its own
+         table name (estate rule; the canonical example is report.ref rather than
+         report.report_ref), and prg_report.report_type is exactly that shape. This
+         is the one deliberate column-level divergence from CRG in this file, taken
+         because a v1 baseline on an empty database is the only moment it is free.
+         `trigger_kind`, `window_key`, `file_name` and `job_name` do NOT repeat the
+         table name and keep CRG's spelling. -->
+    <changeSet id="prg-002-report" author="dcre">
+        <createTable tableName="prg_report">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="client" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="type" type="VARCHAR(12)"><constraints nullable="false"/></column>
+            <column name="trigger_kind" type="VARCHAR(16)"><constraints nullable="false"/></column>
+            <column name="window_key" type="VARCHAR(64)"><constraints nullable="false"/></column>
+            <column name="parent_source_msg_id" type="VARCHAR(35)"/>
+            <!-- Unique: the restart no-op lookup. A standing row means the emission
+                 already registered, so a replayed window reuses it (R-24). -->
+            <column name="file_name" type="VARCHAR(128)">
+                <constraints nullable="false" unique="true"
+                             uniqueConstraintName="uq_prg_report_file"/>
+            </column>
+            <!-- SCRUM-58 clock-scoped trace-join anchor: a clock-launched PSR has no
+                 single arrival, so rpt joins its launching job's ops steps through
+                 agt_ops.launch_intent.job_name. VARCHAR(63) matches that contract.
+                 Declared here, not added by a later ALTER as in CRG. -->
+            <column name="job_name" type="VARCHAR(63)"/>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex tableName="prg_report" indexName="ix_prg_report_job">
+            <column name="job_name"/>
+        </createIndex>
+        <rollback><dropTable tableName="prg_report"/></rollback>
+    </changeSet>
+
+    <!-- ============================ delivery ledger ============================ -->
+    <!-- Append-only: the authority on what was externally reported. report_id names
+         its TARGET table and is therefore exempt from the no-host-prefix rule. -->
+    <changeSet id="prg-002-delivery-ledger" author="dcre">
+        <createTable tableName="prg_delivery_ledger">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="report_id" type="UUID"><constraints nullable="false"/></column>
+            <column name="client" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="e2e" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="status" type="VARCHAR(32)"><constraints nullable="false"/></column>
+            <column name="manual_ref" type="VARCHAR(64)"/>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <createIndex tableName="prg_delivery_ledger" indexName="ix_prg_ledger_report">
+            <column name="report_id"/>
+        </createIndex>
+        <rollback><dropTable tableName="prg_delivery_ledger"/></rollback>
+    </changeSet>
+
+    <changeSet id="prg-002-ledger-auto-guard" author="dcre">
+        <!-- LIQUIBASE-SQL-EXCEPTION: a PARTIAL unique index (WHERE clause) has no
+             typed Liquibase tag. The predicate is the whole point: the auto-send
+             guard must arbitrate (client, e2e, status) in the DATABASE so the same
+             tuple is never auto-sent twice across restarts or racing writers, while
+             manual_ref rows fall OUTSIDE the index so a manual override bypasses the
+             guard and still writes its audit row. -->
+        <sql>CREATE UNIQUE INDEX uq_prg_ledger_auto ON prg_delivery_ledger (client, e2e, status) WHERE manual_ref IS NULL;</sql>
+        <rollback>
+            <dropIndex tableName="prg_delivery_ledger" indexName="uq_prg_ledger_auto"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

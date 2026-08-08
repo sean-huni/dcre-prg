@@ -1,0 +1,396 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        BOOTSTRAP-ORDER GUARD for the nine dcre_pay tables PRG's view stack reads
+        but does NOT own.
+
+        This is not migration scar tissue and it is not a defensive retrofit. PRG is
+        CLOCK-launched: on a brand-new dcre_pay its first window can fire before PRR,
+        PTV, PRW, PIX, PSX or PPX has ever run, and CREATE VIEW against an absent
+        table is a hard failure that leaves the pod crash-looping with a partially
+        applied changelog. A-79 is the precedent that makes this non-optional: a view
+        left uncreated on dcre_col meant NO collections arrival could ever complete,
+        silently, and nothing alerted.
+
+        Each table is declared with its OWNER's exact column set, types, nullability
+        and constraint/index NAMES, read from the owners' changelogs rather than
+        remembered:
+          tx_header, tx_entry              prr/2026/08/001-pay-spine.xml
+          validation_log                   ptv/2026/08/001-ptv-validation.xml
+          isr_resp                         pix/2026/08/001-pay-isr-resp.xml
+          sbsr_resp                        psx/2026/08/001-pay-sbsr-resp.xml
+          pbsr_resp                        ppx/2026/08/001-pay-pbsr-resp.xml
+          prw_emission_group,
+          prw_emission,
+          prw_emission_member              prw/2026/08/001-prw-emission.xml
+        A shape that differs from its owner's is worse than no guard: whichever
+        service runs second skips on tableExists and the divergence is permanent and
+        invisible. That duplication is a real cost of this pattern, and it is why
+        BootstrapOrderIT runs this changelog in BOTH orders.
+
+        Re-run safety is onFail="CONTINUE", never MARK_RAN, per the payments family
+        (A-79, A-81). MARK_RAN records the skip PERMANENTLY, so a database that was
+        merely not-yet-ready at the moment of the check never receives the change at
+        all. CONTINUE leaves the changeset unlogged and re-evaluated next run, which
+        is the behaviour a bootstrap guard actually wants.
+
+        Typed tags only, no raw-SQL bodies (pure-XML rule, persistence.md). CRG's
+        equivalent guard is one raw SQL blob; that is the form the rule exists to stop.
+    -->
+
+    <!-- ============================ PRR: the payments spine ==================== -->
+
+    <changeSet id="prg-001-bootstrap-tx-header" author="dcre">
+        <preConditions onFail="CONTINUE">
+            <not><tableExists tableName="tx_header"/></not>
+        </preConditions>
+        <createTable tableName="tx_header">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="arrival_id" type="UUID">
+                <constraints nullable="false" unique="true" uniqueConstraintName="uq_pay_header_arrival"/>
+            </column>
+            <column name="msg_id_raw" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="msg_id" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="created_ts" type="VARCHAR(14)"><constraints nullable="false"/></column>
+            <column name="tx_count" type="INT"><constraints nullable="false"/></column>
+            <column name="initg_pty" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="business_date" type="VARCHAR(8)"><constraints nullable="false"/></column>
+            <column name="client_token" type="VARCHAR(16)"/>
+            <column name="layout_version" type="INT"><constraints nullable="false"/></column>
+            <column name="version" type="BIGINT" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <rollback><dropTable tableName="tx_header"/></rollback>
+    </changeSet>
+
+    <changeSet id="prg-001-bootstrap-tx-entry" author="dcre">
+        <preConditions onFail="CONTINUE">
+            <not><tableExists tableName="tx_entry"/></not>
+        </preConditions>
+        <createTable tableName="tx_entry">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="arrival_id" type="UUID"><constraints nullable="false"/></column>
+            <column name="sequence" type="INT"><constraints nullable="false"/></column>
+            <column name="record_type" type="VARCHAR(2)"><constraints nullable="false"/></column>
+            <column name="e2e_raw" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="e2e" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="creditor_account" type="VARCHAR(23)"><constraints nullable="false"/></column>
+            <column name="contract_ref" type="VARCHAR(14)"/>
+            <column name="currency" type="VARCHAR(3)"><constraints nullable="false"/></column>
+            <column name="amount_raw" type="VARCHAR(15)"><constraints nullable="false"/></column>
+            <column name="amount" type="DECIMAL(18,2)"><constraints nullable="false"/></column>
+            <column name="branch_code" type="VARCHAR(11)"/>
+            <column name="debtor_name" type="VARCHAR(35)"/>
+            <column name="debtor_account" type="VARCHAR(23)"/>
+            <column name="acc_type_seq" type="VARCHAR(8)"/>
+            <!-- Present in the SHARED physical layout, expected NULL on every ENDO
+                 row: the mandate gate is DC-only (R-19). PRG never reads it, which
+                 is why there is no payments successor to CRG's
+                 man_collection_outcome view. -->
+            <column name="mandate_ref" type="VARCHAR(35)"/>
+            <column name="content_hash" type="CHAR(64)"/>
+            <column name="version" type="BIGINT" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="tx_entry" columnNames="arrival_id, sequence"
+                             constraintName="uq_pay_entry_arrival_sequence"/>
+        <createIndex tableName="tx_entry" indexName="idx_pay_entry_arrival_content_hash">
+            <column name="arrival_id"/>
+            <column name="content_hash"/>
+            <column name="sequence"/>
+        </createIndex>
+        <rollback><dropTable tableName="tx_entry"/></rollback>
+    </changeSet>
+
+    <!-- ============================ PTV: the verdict store ===================== -->
+
+    <changeSet id="prg-001-bootstrap-validation-log" author="dcre">
+        <preConditions onFail="CONTINUE">
+            <not><tableExists tableName="validation_log"/></not>
+        </preConditions>
+        <createTable tableName="validation_log">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="arrival_id" type="UUID"><constraints nullable="false"/></column>
+            <column name="sequence" type="INT"><constraints nullable="false"/></column>
+            <column name="outcome" type="VARCHAR(32)"><constraints nullable="false"/></column>
+            <column name="detail" type="VARCHAR(256)"/>
+            <column name="version" type="BIGINT" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="validation_log" columnNames="arrival_id, sequence"
+                             constraintName="uq_validation_arrival_sequence"/>
+        <rollback><dropTable tableName="validation_log"/></rollback>
+    </changeSet>
+
+    <!-- ================== PIX / PSX / PPX: the response cylinders ============== -->
+    <!-- Unprefixed, exactly as the payments RESP sheet labels them, and carrying NO
+         emission_id column: PIX/PSX/PPX dropped CIX's emission FK deliberately, so
+         PRG correlates a reply to its outbound batch through
+         orgnl_msg_id = prw_emission.outbound_msg_id instead (see 003). -->
+
+    <changeSet id="prg-001-bootstrap-isr-resp" author="dcre">
+        <preConditions onFail="CONTINUE">
+            <not><tableExists tableName="isr_resp"/></not>
+        </preConditions>
+        <createTable tableName="isr_resp">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="response_file" type="VARCHAR(512)"><constraints nullable="false"/></column>
+            <column name="orgnl_msg_id" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="e2e" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="status" type="VARCHAR(8)"><constraints nullable="false"/></column>
+            <column name="reason" type="VARCHAR(8)"/>
+            <column name="version" type="BIGINT" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="isr_resp" columnNames="response_file, e2e"
+                             constraintName="uq_pay_isr_resp_file_e2e"/>
+        <rollback><dropTable tableName="isr_resp"/></rollback>
+    </changeSet>
+
+    <changeSet id="prg-001-bootstrap-sbsr-resp" author="dcre">
+        <preConditions onFail="CONTINUE">
+            <not><tableExists tableName="sbsr_resp"/></not>
+        </preConditions>
+        <createTable tableName="sbsr_resp">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="response_file" type="VARCHAR(512)"><constraints nullable="false"/></column>
+            <column name="orgnl_msg_id" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="e2e" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="status" type="VARCHAR(8)"><constraints nullable="false"/></column>
+            <column name="reason" type="VARCHAR(8)"/>
+            <column name="version" type="BIGINT" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="sbsr_resp" columnNames="response_file, e2e"
+                             constraintName="uq_pay_sbsr_resp_file_e2e"/>
+        <rollback><dropTable tableName="sbsr_resp"/></rollback>
+    </changeSet>
+
+    <changeSet id="prg-001-bootstrap-pbsr-resp" author="dcre">
+        <preConditions onFail="CONTINUE">
+            <not><tableExists tableName="pbsr_resp"/></not>
+        </preConditions>
+        <createTable tableName="pbsr_resp">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="response_file" type="VARCHAR(512)"><constraints nullable="false"/></column>
+            <column name="orgnl_msg_id" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="e2e" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="status" type="VARCHAR(8)"><constraints nullable="false"/></column>
+            <column name="reason" type="VARCHAR(8)"/>
+            <column name="version" type="BIGINT" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="pbsr_resp" columnNames="response_file, e2e"
+                             constraintName="uq_pay_pbsr_resp_file_e2e"/>
+        <rollback><dropTable tableName="pbsr_resp"/></rollback>
+    </changeSet>
+
+    <!-- ===================== PRW: the payments emission registry =============== -->
+    <!-- No run_date anywhere: payments does not warehouse (PRW 001 states the
+         reasoning in full). Every CRW identity tuple loses that dimension here. -->
+
+    <changeSet id="prg-001-bootstrap-emission-group" author="dcre">
+        <preConditions onFail="CONTINUE">
+            <not><tableExists tableName="prw_emission_group"/></not>
+        </preConditions>
+        <createTable tableName="prw_emission_group">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="arrival_id" type="UUID"><constraints nullable="false"/></column>
+            <column name="client" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="source_msg_id" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="applied_max" type="INT"><constraints nullable="false"/></column>
+            <column name="total_tx" type="BIGINT"><constraints nullable="false"/></column>
+            <column name="total_amount" type="DECIMAL(18,2)"><constraints nullable="false"/></column>
+            <column name="expected_batch_count" type="INT"><constraints nullable="false"/></column>
+            <column name="split" type="BOOLEAN"><constraints nullable="false"/></column>
+            <column name="version" type="BIGINT" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="prw_emission_group" columnNames="arrival_id"
+                             constraintName="uq_prw_group_arrival"/>
+        <addUniqueConstraint tableName="prw_emission_group" columnNames="client, source_msg_id"
+                             constraintName="uq_prw_group_client_msg"/>
+        <rollback><dropTable tableName="prw_emission_group"/></rollback>
+    </changeSet>
+
+    <changeSet id="prg-001-bootstrap-emission" author="dcre">
+        <preConditions onFail="CONTINUE">
+            <not><tableExists tableName="prw_emission"/></not>
+        </preConditions>
+        <createTable tableName="prw_emission">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="group_id" type="UUID"><constraints nullable="false"/></column>
+            <column name="arrival_id" type="UUID"><constraints nullable="false"/></column>
+            <column name="batch_ordinal" type="INT"><constraints nullable="false"/></column>
+            <column name="outbound_msg_id" type="VARCHAR(64)"><constraints nullable="false"/></column>
+            <column name="file_name" type="VARCHAR(128)"><constraints nullable="false"/></column>
+            <column name="state" type="VARCHAR(32)"><constraints nullable="false"/></column>
+            <column name="tx_count" type="BIGINT"/>
+            <column name="control_sum" type="DECIMAL(18,2)"/>
+            <column name="visible_at" type="TIMESTAMPTZ"/>
+            <column name="version" type="BIGINT" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="prw_emission" columnNames="arrival_id, batch_ordinal"
+                             constraintName="uq_prw_emission_arrival_ordinal"/>
+        <!-- The globally unique outbound identity. It is also the ONLY correlation
+             path PRG has from a reply back to its batch, so it is load-bearing here
+             in a way it is not in PRW. -->
+        <createIndex tableName="prw_emission" indexName="uq_prw_emission_outbound_msg" unique="true">
+            <column name="outbound_msg_id"/>
+        </createIndex>
+        <rollback><dropTable tableName="prw_emission"/></rollback>
+    </changeSet>
+
+    <changeSet id="prg-001-bootstrap-emission-member" author="dcre">
+        <preConditions onFail="CONTINUE">
+            <not><tableExists tableName="prw_emission_member"/></not>
+        </preConditions>
+        <createTable tableName="prw_emission_member">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="emission_id" type="UUID"><constraints nullable="false"/></column>
+            <column name="sequence" type="INT"><constraints nullable="false"/></column>
+            <column name="e2e" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="amount" type="DECIMAL(18,2)"><constraints nullable="false"/></column>
+            <column name="version" type="BIGINT" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="prw_emission_member" columnNames="emission_id, sequence"
+                             constraintName="uq_prw_member_emission_sequence"/>
+        <rollback><dropTable tableName="prw_emission_member"/></rollback>
+    </changeSet>
+
+    <!-- ==================== PRG-owned read-path indexes ======================== -->
+    <!-- SCRUM-55 perf lesson, carried because the cause is structural rather than
+         historical: without these the pick views degrade to nested-loop lookups per
+         transaction row, which hung the live AGT trigger scan for 7+ minutes on a
+         12,001-tx parent. They sit on tables PRG does not own, which is why they
+         carry the prg_ prefix and are declared here rather than in PIX/PSX/PPX. -->
+
+    <changeSet id="prg-001-ix-isr-orgnl-e2e" author="dcre">
+        <preConditions onFail="CONTINUE">
+            <not><indexExists tableName="isr_resp" indexName="ix_prg_isr_orgnl_e2e"/></not>
+        </preConditions>
+        <createIndex tableName="isr_resp" indexName="ix_prg_isr_orgnl_e2e">
+            <column name="orgnl_msg_id"/><column name="e2e"/><column name="created_at"/>
+        </createIndex>
+        <rollback><dropIndex tableName="isr_resp" indexName="ix_prg_isr_orgnl_e2e"/></rollback>
+    </changeSet>
+
+    <changeSet id="prg-001-ix-sbsr-orgnl-e2e" author="dcre">
+        <preConditions onFail="CONTINUE">
+            <not><indexExists tableName="sbsr_resp" indexName="ix_prg_sbsr_orgnl_e2e"/></not>
+        </preConditions>
+        <createIndex tableName="sbsr_resp" indexName="ix_prg_sbsr_orgnl_e2e">
+            <column name="orgnl_msg_id"/><column name="e2e"/><column name="created_at"/>
+        </createIndex>
+        <rollback><dropIndex tableName="sbsr_resp" indexName="ix_prg_sbsr_orgnl_e2e"/></rollback>
+    </changeSet>
+
+    <changeSet id="prg-001-ix-pbsr-orgnl-e2e" author="dcre">
+        <preConditions onFail="CONTINUE">
+            <not><indexExists tableName="pbsr_resp" indexName="ix_prg_pbsr_orgnl_e2e"/></not>
+        </preConditions>
+        <createIndex tableName="pbsr_resp" indexName="ix_prg_pbsr_orgnl_e2e">
+            <column name="orgnl_msg_id"/><column name="e2e"/><column name="created_at"/>
+        </createIndex>
+        <rollback><dropIndex tableName="pbsr_resp" indexName="ix_prg_pbsr_orgnl_e2e"/></rollback>
+    </changeSet>
+
+    <changeSet id="prg-001-ix-emission-group" author="dcre">
+        <preConditions onFail="CONTINUE">
+            <not><indexExists tableName="prw_emission" indexName="ix_prg_emission_group"/></not>
+        </preConditions>
+        <createIndex tableName="prw_emission" indexName="ix_prg_emission_group">
+            <column name="group_id"/>
+        </createIndex>
+        <rollback><dropIndex tableName="prw_emission" indexName="ix_prg_emission_group"/></rollback>
+    </changeSet>
+
+</databaseChangeLog>

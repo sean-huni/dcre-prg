@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        V1 BASELINE for the PAYMENTS report generator in dcre_pay (owner directive
+        2026-08-08: every DCRE database is dropped and cut over directly, so there is
+        no historic state to migrate and no deployed schema to protect).
+
+        This is NOT a port of CRG's 53-changeset history. Each object is declared once
+        in its final shape, and the re-run guards that history required are absent on
+        purpose. DATABASECHANGELOG is what makes a re-run safe from a clean baseline;
+        the guards CRG carries (validCheckSum ANY on designed schema, MARK_RAN
+        preconditions over pre-existing objects, IF-NOT-EXISTS on CREATEs) existed to
+        survive a migration that has now been abandoned, and reproducing them would be
+        exactly the hacking-around-Liquibase the owner has forbidden.
+
+        Two deliberate exceptions, both of which are live requirements rather than
+        history:
+          - 001 guards tables PRG does NOT own with onFail="CONTINUE". PRG is
+            clock-launched and can migrate before PRR/PTV/PRW/PIX/PSX/PPX have ever
+            run, and CREATE VIEW against an absent table crash-loops the pod.
+          - 004 vendors Spring Batch's own framework DDL, which is multi-statement,
+            non-transactional on CockroachDB, and therefore genuinely needs
+            IF NOT EXISTS to survive a mid-migration kill.
+
+        Order is load-bearing: sources, then owned tables (the views reference
+        prg_status_class and prg_delivery_ledger), then views, then batch metadata.
+    -->
+    <include file="db/changelog/2026/08/001-pay-report-sources.xml"/>
+    <include file="db/changelog/2026/08/002-pay-reporting.xml"/>
+    <include file="db/changelog/2026/08/003-pay-status-views.xml"/>
+    <include file="db/changelog/2026/08/004-batch-metadata.xml"/>
+
+</databaseChangeLog>
