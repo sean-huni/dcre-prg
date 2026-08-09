@@ -33,7 +33,7 @@ all but one are forced by decisions other payments services already made.
 
 | # | Difference | Why it is not drift |
 |---|---|---|
-| 1 | Reads `dcre_pay`; `DCRE_PAY_DB_URL` | Database per family. The database IS the discriminator now, so there is no flow column to branch on. |
+| 1 | Reads `dcre_pay`; `DCRE_DB_URL` | Database per family. The database IS the discriminator now, so there is no flow column to branch on. |
 | 2 | Emission registry is `prw_emission*`, with **no `run_date`** | PRW's own ruling: payments has no CDE, no collection day and no warehousing, so a run date is not part of any identity. |
 | 3 | Replies correlate by `orgnl_msg_id = prw_emission.outbound_msg_id`, never by an `emission_id` column | PIX/PSX/PPX deliberately dropped CIX's emission FK. CRG's three correlation paths collapse to two here (see below). |
 | 4 | No `man_collection_outcome` view | The mandate gate is DC-only (R-19). A payment carries no bank-registered mandate, so there is nothing for MSR to read here. `tx_entry.mandate_ref` exists in the shared physical layout and is expected NULL on every ENDO row. |
@@ -252,9 +252,9 @@ Precedence: yml default < environment variable. All defaults are committed in `a
 
 | Env | Default | Purpose |
 |---|---|---|
-| `DCRE_PAY_DB_URL` | `jdbc:postgresql://localhost:26257/dcre_pay?sslmode=disable` | CockroachDB via pgwire |
-| `DCRE_PAY_DB_USER` | `root` | DB user |
-| `DCRE_PAY_DB_PASSWORD` | (empty) | DB password |
+| `DCRE_DB_URL` | `jdbc:postgresql://localhost:26257/dcre_pay?sslmode=disable` | CockroachDB via pgwire |
+| `DCRE_DB_USER` | `root` | DB user |
+| `DCRE_DB_PASSWORD` | (empty) | DB password |
 | `DCRE_AGTOPS_DB_URL` | `jdbc:postgresql://localhost:26257/agt_ops?sslmode=disable` | HeartbeatWriter liveness stamp on `agt_ops.launch_intent` |
 | `DCRE_AGTOPS_DB_USER` | `root` | agt_ops user |
 | `DCRE_AGTOPS_DB_PASSWORD` | (empty) | agt_ops password |

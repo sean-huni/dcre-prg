@@ -13,9 +13,15 @@ spring:
     # response cylinders (isr_resp / sbsr_resp / pbsr_resp, written by PIX/PSX/PPX),
     # the payments spine (tx_header / tx_entry / validation_log) and the payments
     # emission registry (prw_emission*), all in dcre_pay. It never opens dcre_col.
-    url: ${DCRE_PAY_DB_URL:jdbc:postgresql://localhost:26257/dcre_pay?sslmode=disable}
-    username: ${DCRE_PAY_DB_USER:root}
-    password: ${DCRE_PAY_DB_PASSWORD:}
+    # DCRE_DB_URL is the WIRE CONTRACT with AGT: AGT injects exactly this name into
+    # every stage Job it launches (JobLauncher.DB_URL_ENV) and resolves the VALUE per
+    # family. One variable routed per family, never one variable name per family. This
+    # read said DCRE_PAY_DB_URL until SCRUM-107 and nothing in AGT or dcre-infra set
+    # that name, so in a pod the service fell back to the committed localhost default
+    # below, which in a pod is the pod itself.
+    url: ${DCRE_DB_URL:jdbc:postgresql://localhost:26257/dcre_pay?sslmode=disable}
+    username: ${DCRE_DB_USER:root}
+    password: ${DCRE_DB_PASSWORD:}
     hikari:
       # SCRUM-90, inherited from CRG for the same measured reason, not by habit: a
       # report generator is the only stage whose CONCURRENT clock windows collide at
