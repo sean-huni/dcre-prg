@@ -33,7 +33,9 @@ import static org.assertj.core.api.Assertions.tuple;
  * correlated one does not. The fixture keeps the live incident's scale
  * (12,000 tx in one parent, 100 in a second) and the 5s bound unchanged.
  */
-@SpringBootTest(properties = {"spring.batch.job.enabled=false", "dcre.exchange-root=build/test-exchange",
+@SpringBootTest(properties = {
+        "spring.liquibase.change-log=classpath:db/changelog/db.changelog-test-master.xml",
+        "spring.batch.job.enabled=false", "dcre.exchange-root=build/test-exchange",
         "DCRE_EXCHANGE_ROOT=build/test-exchange"})
 class ReportDuePerfIT {
 

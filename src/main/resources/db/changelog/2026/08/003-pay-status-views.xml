@@ -8,6 +8,17 @@
     <!--
         PRG's status-projection view stack over dcre_pay.
 
+        ORDERING CONTRACT (2026-08-08). Every view below reads relations PRG does NOT
+        own (tx_header and tx_entry from PRR, validation_log from PTV, isr_resp /
+        sbsr_resp / pbsr_resp from PIX / PSX / PPX, prw_emission* from PRW), and PRG no
+        longer mints any of them. CockroachDB resolves a view body at CREATE time, so on
+        a fresh database PRG's migration must run AFTER those writers'. If it does not,
+        this file fails loudly and names the missing relation, which is strictly better
+        than the previous behaviour of inventing a table and drifting from its owner.
+        The failure is a crash and a retry, never an empty result: a view that was never
+        created cannot be queried and return zero rows. The full contract, including what
+        stands the relations up for the tests, is in db.changelog-master.xml.
+
         THE ONE STRUCTURAL DIFFERENCE FROM CRG, and it is forced rather than chosen:
         the payments response cylinders carry NO emission_id column. PIX/PSX/PPX
         dropped CIX's 003-emission-fk deliberately (their 001 files record why), so

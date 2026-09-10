@@ -5,50 +5,55 @@
         xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
 
-    <!--
-        BOOTSTRAP-ORDER GUARD for the nine dcre_pay tables PRG's view stack reads
-        but does NOT own.
+    <!-- ============================================================================
+         TEST FIXTURE ONLY. Nothing in this file ships: it lives under src/test and is
+         reached only through db.changelog-test-master.xml.
 
-        This is not migration scar tissue and it is not a defensive retrofit. PRG is
-        CLOCK-launched: on a brand-new dcre_pay its first window can fire before PRR,
-        PTV, PRW, PIX, PSX or PPX has ever run, and CREATE VIEW against an absent
-        table is a hard failure that leaves the pod crash-looping with a partially
-        applied changelog. A-79 is the precedent that makes this non-optional: a view
-        left uncreated on dcre_col meant NO collections arrival could ever complete,
-        silently, and nothing alerted.
+         PRG READS nine relations it does not own and, from this change on, does not
+         create. Its own integration tests still need them to exist, because PRG's
+         views resolve their targets at CREATE time. In production the owning services
+         create them; here this fixture stands in for those services, and it must run
+         BEFORE the production master for the same reason.
 
-        Each table is declared with its OWNER's exact column set, types, nullability
-        and constraint/index NAMES, read from the owners' changelogs rather than
-        remembered:
-          tx_header, tx_entry              prr/2026/08/001-pay-spine.xml
-          validation_log                   ptv/2026/08/001-ptv-validation.xml
-          isr_resp                         pix/2026/08/001-pay-isr-resp.xml
-          sbsr_resp                        psx/2026/08/001-pay-sbsr-resp.xml
-          pbsr_resp                        ppx/2026/08/001-pay-pbsr-resp.xml
-          prw_emission_group,
-          prw_emission,
-          prw_emission_member              prw/2026/08/001-prw-emission.xml
-        A shape that differs from its owner's is worse than no guard: whichever
-        service runs second skips on tableExists and the divergence is permanent and
-        invisible. That duplication is a real cost of this pattern, and it is why
-        BootstrapOrderIT runs this changelog in BOTH orders.
+         Owners, all single-writer per R-04:
+           tx_header, tx_entry .......................... PRR
+           validation_log ............................... PTV
+           isr_resp / sbsr_resp / pbsr_resp ............. PIX / PSX / PPX
+           prw_emission_group / prw_emission /
+           prw_emission_member .......................... PRW
 
-        Re-run safety is onFail="CONTINUE", never MARK_RAN, per the payments family
-        (A-79, A-81). MARK_RAN records the skip PERMANENTLY, so a database that was
-        merely not-yet-ready at the moment of the check never receives the change at
-        all. CONTINUE leaves the changeset unlogged and re-evaluated next run, which
-        is the behaviour a bootstrap guard actually wants.
+         WHY IT MOVED HERE (2026-08-08, family consistency with CRG, which retired the
+         identical anti-pattern first). The bodies below used to ship, guarded with
+         onFail="CONTINUE", so PRG could migrate before its peers on a fresh database.
+         Two things were wrong with that, and neither is fixed by tightening the guard:
 
-        Typed tags only, no raw-SQL bodies (pure-XML rule, persistence.md). CRG's
-        equivalent guard is one raw SQL blob; that is the form the rule exists to stop.
-    -->
+           - it made PRG a SECOND writer of nine relations it does not own. The guard
+             skips silently, so whichever service migrated second inherited the other's
+             shape permanently and invisibly, and the mint had already drifted from its
+             owner once in the collections twin.
+           - a CRG mint winning that race would crashloop the OWNER, which is a worse
+             failure than the one the guard prevents.
+
+         What replaces it is stated as an ordering contract in the production master and
+         in 003-pay-status-views.xml: PRG's migration must run after the writers'. If it
+         does not, the view changelog FAILS and names the missing relation. That failure
+         is loud, it is retried by the pod's restart, and it converges the moment the
+         owner migrates. It is emphatically NOT the silent-zero shape (A-76, A-79): a
+         missing relation cannot yield an empty result here, because CockroachDB resolves
+         a view body at CREATE time and refuses to create it at all.
+
+         The owners' own re-run preconditions were stripped, because this fixture runs
+         once against an empty test database.
+
+         THIS IS A HAND-MAINTAINED MIRROR OF OTHER REPOSITORIES' DDL, which is a drift
+         class: PRG's suite can stay green against a shape the owner has already changed.
+         BootstrapSourceParityTest is what makes that a checked fact rather than a
+         comment, and it is the half of this pattern CRG's equivalent fixture still lacks.
+         ============================================================================ -->
 
     <!-- ============================ PRR: the payments spine ==================== -->
 
-    <changeSet id="prg-001-bootstrap-tx-header" author="dcre">
-        <preConditions onFail="CONTINUE">
-            <not><tableExists tableName="tx_header"/></not>
-        </preConditions>
+    <changeSet id="prg-testfixture-tx-header" author="dcre">
         <createTable tableName="tx_header">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
@@ -77,10 +82,7 @@
         <rollback><dropTable tableName="tx_header"/></rollback>
     </changeSet>
 
-    <changeSet id="prg-001-bootstrap-tx-entry" author="dcre">
-        <preConditions onFail="CONTINUE">
-            <not><tableExists tableName="tx_entry"/></not>
-        </preConditions>
+    <changeSet id="prg-testfixture-tx-entry" author="dcre">
         <createTable tableName="tx_entry">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
@@ -127,10 +129,7 @@
 
     <!-- ============================ PTV: the verdict store ===================== -->
 
-    <changeSet id="prg-001-bootstrap-validation-log" author="dcre">
-        <preConditions onFail="CONTINUE">
-            <not><tableExists tableName="validation_log"/></not>
-        </preConditions>
+    <changeSet id="prg-testfixture-validation-log" author="dcre">
         <createTable tableName="validation_log">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
@@ -160,10 +159,7 @@
          PRG correlates a reply to its outbound batch through
          orgnl_msg_id = prw_emission.outbound_msg_id instead (see 003). -->
 
-    <changeSet id="prg-001-bootstrap-isr-resp" author="dcre">
-        <preConditions onFail="CONTINUE">
-            <not><tableExists tableName="isr_resp"/></not>
-        </preConditions>
+    <changeSet id="prg-testfixture-isr-resp" author="dcre">
         <createTable tableName="isr_resp">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
@@ -188,10 +184,7 @@
         <rollback><dropTable tableName="isr_resp"/></rollback>
     </changeSet>
 
-    <changeSet id="prg-001-bootstrap-sbsr-resp" author="dcre">
-        <preConditions onFail="CONTINUE">
-            <not><tableExists tableName="sbsr_resp"/></not>
-        </preConditions>
+    <changeSet id="prg-testfixture-sbsr-resp" author="dcre">
         <createTable tableName="sbsr_resp">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
@@ -216,10 +209,7 @@
         <rollback><dropTable tableName="sbsr_resp"/></rollback>
     </changeSet>
 
-    <changeSet id="prg-001-bootstrap-pbsr-resp" author="dcre">
-        <preConditions onFail="CONTINUE">
-            <not><tableExists tableName="pbsr_resp"/></not>
-        </preConditions>
+    <changeSet id="prg-testfixture-pbsr-resp" author="dcre">
         <createTable tableName="pbsr_resp">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
@@ -248,16 +238,17 @@
     <!-- No run_date anywhere: payments does not warehouse (PRW 001 states the
          reasoning in full). Every CRW identity tuple loses that dimension here. -->
 
-    <changeSet id="prg-001-bootstrap-emission-group" author="dcre">
-        <preConditions onFail="CONTINUE">
-            <not><tableExists tableName="prw_emission_group"/></not>
-        </preConditions>
+    <changeSet id="prg-testfixture-emission-group" author="dcre">
         <createTable tableName="prw_emission_group">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
             </column>
             <column name="arrival_id" type="UUID"><constraints nullable="false"/></column>
-            <column name="client" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <!-- VARCHAR(16), matching PRW's owning declaration after A-43 (ruled 2026-08-08)
+                 made tx_header.client_token the authority this column carries. 35 was
+                 initg_pty's width and is no longer any source's. BootstrapSourceParityTest
+                 is what makes this a checked fact rather than a remembered one. -->
+            <column name="client" type="VARCHAR(16)"><constraints nullable="false"/></column>
             <column name="source_msg_id" type="VARCHAR(35)"><constraints nullable="false"/></column>
             <column name="applied_max" type="INT"><constraints nullable="false"/></column>
             <column name="total_tx" type="BIGINT"><constraints nullable="false"/></column>
@@ -281,10 +272,7 @@
         <rollback><dropTable tableName="prw_emission_group"/></rollback>
     </changeSet>
 
-    <changeSet id="prg-001-bootstrap-emission" author="dcre">
-        <preConditions onFail="CONTINUE">
-            <not><tableExists tableName="prw_emission"/></not>
-        </preConditions>
+    <changeSet id="prg-testfixture-emission" author="dcre">
         <createTable tableName="prw_emission">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
@@ -319,10 +307,7 @@
         <rollback><dropTable tableName="prw_emission"/></rollback>
     </changeSet>
 
-    <changeSet id="prg-001-bootstrap-emission-member" author="dcre">
-        <preConditions onFail="CONTINUE">
-            <not><tableExists tableName="prw_emission_member"/></not>
-        </preConditions>
+    <changeSet id="prg-testfixture-emission-member" author="dcre">
         <createTable tableName="prw_emission_member">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
@@ -347,50 +332,4 @@
     </changeSet>
 
     <!-- ==================== PRG-owned read-path indexes ======================== -->
-    <!-- SCRUM-55 perf lesson, carried because the cause is structural rather than
-         historical: without these the pick views degrade to nested-loop lookups per
-         transaction row, which hung the live AGT trigger scan for 7+ minutes on a
-         12,001-tx parent. They sit on tables PRG does not own, which is why they
-         carry the prg_ prefix and are declared here rather than in PIX/PSX/PPX. -->
-
-    <changeSet id="prg-001-ix-isr-orgnl-e2e" author="dcre">
-        <preConditions onFail="CONTINUE">
-            <not><indexExists tableName="isr_resp" indexName="ix_prg_isr_orgnl_e2e"/></not>
-        </preConditions>
-        <createIndex tableName="isr_resp" indexName="ix_prg_isr_orgnl_e2e">
-            <column name="orgnl_msg_id"/><column name="e2e"/><column name="created_at"/>
-        </createIndex>
-        <rollback><dropIndex tableName="isr_resp" indexName="ix_prg_isr_orgnl_e2e"/></rollback>
-    </changeSet>
-
-    <changeSet id="prg-001-ix-sbsr-orgnl-e2e" author="dcre">
-        <preConditions onFail="CONTINUE">
-            <not><indexExists tableName="sbsr_resp" indexName="ix_prg_sbsr_orgnl_e2e"/></not>
-        </preConditions>
-        <createIndex tableName="sbsr_resp" indexName="ix_prg_sbsr_orgnl_e2e">
-            <column name="orgnl_msg_id"/><column name="e2e"/><column name="created_at"/>
-        </createIndex>
-        <rollback><dropIndex tableName="sbsr_resp" indexName="ix_prg_sbsr_orgnl_e2e"/></rollback>
-    </changeSet>
-
-    <changeSet id="prg-001-ix-pbsr-orgnl-e2e" author="dcre">
-        <preConditions onFail="CONTINUE">
-            <not><indexExists tableName="pbsr_resp" indexName="ix_prg_pbsr_orgnl_e2e"/></not>
-        </preConditions>
-        <createIndex tableName="pbsr_resp" indexName="ix_prg_pbsr_orgnl_e2e">
-            <column name="orgnl_msg_id"/><column name="e2e"/><column name="created_at"/>
-        </createIndex>
-        <rollback><dropIndex tableName="pbsr_resp" indexName="ix_prg_pbsr_orgnl_e2e"/></rollback>
-    </changeSet>
-
-    <changeSet id="prg-001-ix-emission-group" author="dcre">
-        <preConditions onFail="CONTINUE">
-            <not><indexExists tableName="prw_emission" indexName="ix_prg_emission_group"/></not>
-        </preConditions>
-        <createIndex tableName="prw_emission" indexName="ix_prg_emission_group">
-            <column name="group_id"/>
-        </createIndex>
-        <rollback><dropIndex tableName="prw_emission" indexName="ix_prg_emission_group"/></rollback>
-    </changeSet>
-
 </databaseChangeLog>

@@ -30,7 +30,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-@SpringBootTest(properties = {"spring.batch.job.enabled=false", "dcre.exchange-root=build/test-exchange",
+@SpringBootTest(properties = {
+        "spring.liquibase.change-log=classpath:db/changelog/db.changelog-test-master.xml",
+        "spring.batch.job.enabled=false", "dcre.exchange-root=build/test-exchange",
         "DCRE_EXCHANGE_ROOT=build/test-exchange"})
 class PrgJobTest {
 
