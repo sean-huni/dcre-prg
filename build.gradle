@@ -22,7 +22,7 @@ dependencies {
     implementation 'za.co.fnb.dcre:platform-files:0.1.0'
     implementation 'org.liquibase:liquibase-core'
     implementation 'org.springframework.boot:spring-boot-liquibase'
-    implementation 'za.co.fnb.dcre:platform-batch:0.1.0'
+    implementation 'za.co.fnb.dcre:platform-batch:0.2.0'
     runtimeOnly 'org.postgresql:postgresql'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.batch:spring-batch-test'
