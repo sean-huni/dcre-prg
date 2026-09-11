@@ -450,15 +450,42 @@
         <rollback><dropIndex tableName="pbsr_resp" indexName="ix_prg_pbsr_orgnl_e2e"/></rollback>
     </changeSet>
 
-    <changeSet id="prg-001-ix-emission-group" author="dcre">
-        <preConditions onFail="MARK_RAN">
-            <not><indexExists tableName="prw_emission" indexName="ix_prg_emission_group"/></not>
-        </preConditions>
-        
-        <createIndex tableName="prw_emission" indexName="ix_prg_emission_group">
-            <column name="group_id"/>
-        </createIndex>
-        <rollback><dropIndex tableName="prw_emission" indexName="ix_prg_emission_group"/></rollback>
-    </changeSet>
+    <!-- REMOVED 2026-09-11: changeset prg-001-ix-emission-group, which created
+         ix_prg_emission_group on prw_emission(group_id).
+
+         WHERE IT WENT: to PRW, the service that owns prw_emission, as changeset
+         prw-001-emission-group-index in
+         prw/src/main/resources/db/changelog/2026/08/001-prw-emission.xml, renamed
+         ix_prw_emission_group because an object does not carry another service's prefix.
+
+         WHY IT COULD NOT STAY: it crashlooped every pay-prg-fnbrf01 pod on kind-dcre-dev
+         (measured 2026-09-11) with 'relation "public.prw_emission" does not exist'. PRG
+         reads prw_emission; PRW creates it; PRG must not add schema objects to it. The
+         indexExists guard above it could not prevent the crash either, and this is the part
+         worth remembering: <not><indexExists tableName="prw_emission"/></not> evaluates TRUE
+         when the TABLE is absent, since a table that does not exist has no index. The
+         precondition therefore passed on precisely the database where the DDL had to fail.
+         A presence guard on another service's table is not a guard.
+
+         SAFE TO DELETE RATHER THAN TOMBSTONE: this id has never been recorded as applied
+         anywhere. The live prg_databasechangelog tables in dcre_col and dcre_pay carry
+         003-ix-prg-emission-group and 003-bootstrap-emission-group-prg, and neither carries
+         prg-001-ix-emission-group, so no history row is orphaned by its removal.
+
+         THE THREE INDEXES ABOVE ARE THE SAME SHAPE AND ARE STILL HERE: isr_resp, sbsr_resp
+         and pbsr_resp belong to PIX, PSX and PPX, and prg-001-ix-isr-orgnl-e2e,
+         prg-001-ix-sbsr-orgnl-e2e and prg-001-ix-pbsr-orgnl-e2e declare indexes on them with
+         the same ineffective guard. They were left in place because moving them means editing
+         three repositories outside this change's scope, and they are reported rather than
+         fixed here. Do not read their survival as approval of the pattern.
+
+         Removing this changeset does NOT make PRG survive a PRW that has not migrated, and
+         is not meant to: 003-pay-status-views.xml builds views over prw_emission and
+         CockroachDB resolves a view body at CREATE time, so PRG still fails loudly and names
+         the missing relation, then converges when the pod restarts after PRW has run. That is
+         the ordering contract in db.changelog-master.xml, and OrderingContractIT executes it.
+         What changes is that the failure is now a clean read-ordering crash instead of an
+         attempt to write into another service's table. -->
+
 
 </databaseChangeLog>
