@@ -80,6 +80,23 @@
 
     <!-- ============= latest reply per (emission, e2e), one window pass ========= -->
 
+    <!-- RE-RUN GUARD, DELIBERATELY ABSENT ON THE createView CHANGESETS BELOW.
+         Every view changeset here carries replaceIfExists="true", which Liquibase renders
+         as CREATE OR REPLACE VIEW, so it cannot collide with an existing view and needs no
+         onFail="MARK_RAN" precondition. Measured on this database 2026-09-11, the two arms
+         differing only by that attribute: replaceIfExists="true" against an EXISTING view
+         exited 0, and the same statement without it exited 1 with
+         'relation "..." already exists'.
+
+         A guard here would be worse than none. MARK_RAN records a changeset as applied for
+         ever, so on exactly the databases this pass exists to repair, where the object is
+         present but the history row is missing, a not/viewExists guard would freeze the
+         OLD view definition permanently while recording it as run. The re-runnable form
+         refreshes the definition instead, which is the behaviour wanted.
+
+         This is a decision, not an omission: if you are counting changesets against
+         preconditions, these are the difference. -->
+
     <changeSet id="prg-003-isr-pick-view" author="dcre" runOnChange="true">
         <createView viewName="prg_isr_pick" replaceIfExists="true"><![CDATA[
             SELECT u.emission_id, u.e2e, u.status

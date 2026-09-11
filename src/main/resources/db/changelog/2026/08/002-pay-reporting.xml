@@ -54,6 +54,10 @@
          every PSR as an unknown, and a catalogue that classifies a code it never
          sees costs nothing. -->
     <changeSet id="prg-002-status-class" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><tableExists tableName="prg_status_class"/></not>
+        </preConditions>
+        
         <createTable tableName="prg_status_class">
             <column name="code" type="VARCHAR(8)">
                 <constraints primaryKey="true" nullable="false"/>
@@ -69,6 +73,10 @@
     </changeSet>
 
     <changeSet id="prg-002-status-class-seed" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">SELECT count(*) FROM prg_status_class</sqlCheck>
+        </preConditions>
+        
         <!-- Terminal success -->
         <insert tableName="prg_status_class">
             <column name="code" value="ACSC"/><column name="terminal" valueBoolean="true"/>
@@ -187,6 +195,10 @@
          the fixture that can tell the difference; every other fixture in this module seeds both
          columns to one value and cannot. -->
     <changeSet id="prg-002-watermark" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><tableExists tableName="prg_watermark"/></not>
+        </preConditions>
+        
         <createTable tableName="prg_watermark">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
@@ -213,6 +225,10 @@
          INSERT ... ON CONFLICT (client, e2e) DO UPDATE needs this constraint to
          exist, or a restarted advance duplicates instead of rewriting. -->
     <changeSet id="prg-002-watermark-identity" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><indexExists tableName="prg_watermark" indexName="uq_prg_watermark_client_e2e"/></not>
+        </preConditions>
+        
         <addUniqueConstraint tableName="prg_watermark" columnNames="client, e2e"
                              constraintName="uq_prg_watermark_client_e2e"/>
         <rollback>
@@ -233,6 +249,10 @@
          `trigger_kind`, `window_key`, `file_name` and `job_name` do NOT repeat the
          table name and keep CRG's spelling. -->
     <changeSet id="prg-002-report" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><tableExists tableName="prg_report"/></not>
+        </preConditions>
+        
         <createTable tableName="prg_report">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
@@ -267,6 +287,10 @@
     <!-- Append-only: the authority on what was externally reported. report_id names
          its TARGET table and is therefore exempt from the no-host-prefix rule. -->
     <changeSet id="prg-002-delivery-ledger" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><tableExists tableName="prg_delivery_ledger"/></not>
+        </preConditions>
+        
         <createTable tableName="prg_delivery_ledger">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
@@ -287,6 +311,10 @@
     </changeSet>
 
     <changeSet id="prg-002-ledger-auto-guard" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><indexExists tableName="prg_delivery_ledger" indexName="uq_prg_ledger_auto"/></not>
+        </preConditions>
+        
         <!-- LIQUIBASE-SQL-EXCEPTION: a PARTIAL unique index (WHERE clause) has no
              typed Liquibase tag. The predicate is the whole point: the auto-send
              guard must arbitrate (client, e2e, status) in the DATABASE so the same
@@ -310,6 +338,10 @@
          owners' migrations, and a missing table fails loudly and names itself. -->
 
     <changeSet id="prg-001-ix-isr-orgnl-e2e" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><indexExists tableName="isr_resp" indexName="ix_prg_isr_orgnl_e2e"/></not>
+        </preConditions>
+        
         <createIndex tableName="isr_resp" indexName="ix_prg_isr_orgnl_e2e">
             <column name="orgnl_msg_id"/><column name="e2e"/><column name="created_at"/>
         </createIndex>
@@ -317,6 +349,10 @@
     </changeSet>
 
     <changeSet id="prg-001-ix-sbsr-orgnl-e2e" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><indexExists tableName="sbsr_resp" indexName="ix_prg_sbsr_orgnl_e2e"/></not>
+        </preConditions>
+        
         <createIndex tableName="sbsr_resp" indexName="ix_prg_sbsr_orgnl_e2e">
             <column name="orgnl_msg_id"/><column name="e2e"/><column name="created_at"/>
         </createIndex>
@@ -324,6 +360,10 @@
     </changeSet>
 
     <changeSet id="prg-001-ix-pbsr-orgnl-e2e" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><indexExists tableName="pbsr_resp" indexName="ix_prg_pbsr_orgnl_e2e"/></not>
+        </preConditions>
+        
         <createIndex tableName="pbsr_resp" indexName="ix_prg_pbsr_orgnl_e2e">
             <column name="orgnl_msg_id"/><column name="e2e"/><column name="created_at"/>
         </createIndex>
@@ -331,6 +371,10 @@
     </changeSet>
 
     <changeSet id="prg-001-ix-emission-group" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><indexExists tableName="prw_emission" indexName="ix_prg_emission_group"/></not>
+        </preConditions>
+        
         <createIndex tableName="prw_emission" indexName="ix_prg_emission_group">
             <column name="group_id"/>
         </createIndex>
