@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        CONVERGENCE of prg_report's type column across the two states dcre_pay can be in.
+
+        THE DEFECT. PRG crashed on kind-dcre-dev (measured 2026-09-11) with
+        'column "prg_report.type" does not exist'. The live table is a schema generation
+        from BEFORE the v1 rename and carries CRG's spelling:
+
+          dcre_pay.prg_report  id, client, report_type, trigger_kind, window_key,
+                               parent_source_msg_id, file_name, created_at, job_name
+
+        Everything in this repository says `type`: the createTable in
+        2026/08/002-pay-reporting.xml, PrgReportEntity.type, and the tests. The rename to
+        `type` is deliberate and documented (a column never repeats its own table name), so
+        the code is right and the DATABASE is behind.
+
+        WHY NOTHING REPORTED IT. prg-002-report gained a re-run guard,
+        <not><tableExists tableName="prg_report"/></not> onFail="MARK_RAN". On the stale
+        database the table is present, so the guard fails, MARK_RAN records the createTable
+        as applied, and the migration reports SUCCESS over a table whose shape it never
+        checked. The drift then became permanent and silent: a green migration, a green
+        suite, and a service that cannot write a report row. A tableExists guard asserts a
+        NAME; it says nothing about COLUMNS, and it is the mechanism by which a stale schema
+        gets certified as current.
+
+        WHY A RENAME AND NOT A NEW createTable. The rows already in prg_report are the
+        registry of reports already emitted, and prg_report.file_name is the restart no-op
+        lookup (R-24). Dropping and recreating the table would make every previously emitted
+        window look unemitted and re-issue it. renameColumn preserves the rows.
+
+        HOW THE TWO STATES CONVERGE. The precondition tests for the OLD column rather than
+        guarding against the new one, so it reads the actual shape rather than a name:
+
+          - STALE database (column is report_type): the precondition PASSES, the rename runs,
+            and the column becomes `type`. Converged.
+          - FRESH database (2026/08 created the column as `type`): report_type is absent, the
+            precondition FAILS, MARK_RAN records the changeset without executing it, and the
+            column stays `type`. Converged, and the history row means no later run re-asks.
+
+        MARK_RAN is the right failure mode here specifically because the skip it records
+        permanently is a skip of work that is permanently unnecessary: on a database that was
+        born correct there is no future moment at which this rename becomes wanted. That is
+        the opposite of the A-79 / A-81 hazard, where MARK_RAN recorded a skip against a
+        database that was merely not yet ready.
+
+        Verified on this cluster: CockroachDB accepts ALTER TABLE x RENAME COLUMN a TO b.
+    -->
+    <changeSet id="prg-v2-report-type-rename" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <columnExists tableName="prg_report" columnName="report_type"/>
+        </preConditions>
+        <renameColumn tableName="prg_report" oldColumnName="report_type" newColumnName="type"/>
+        <rollback>
+            <renameColumn tableName="prg_report" oldColumnName="type" newColumnName="report_type"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

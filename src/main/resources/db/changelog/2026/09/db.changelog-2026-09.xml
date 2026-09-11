@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- Sub-master for 2026/09, the first month after the v1 baseline. Same layout as
+         2026/08's: the root master includes MONTHS and never individual changesets, so a new
+         month is one line in the root and every changeset within the month stays ordered
+         here.
+
+         2026/09 holds REPAIRS to databases the baseline has already run against, which is a
+         different kind of file from 2026/08 and is why it is a separate month rather than an
+         addition to that one. A baseline changeset is written as though the database were
+         empty; a repair has to be correct on every state the database is actually in, and it
+         says which states those are. -->
+
+    <include file="db/changelog/2026/09/001-report-type-rename.xml"/>
+
+</databaseChangeLog>

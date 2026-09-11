@@ -37,7 +37,7 @@ all but one are forced by decisions other payments services already made.
 | 2 | Emission registry is `prw_emission*`, with **no `run_date`** | PRW's own ruling: payments has no CDE, no collection day and no warehousing, so a run date is not part of any identity. |
 | 3 | Replies correlate by `orgnl_msg_id = prw_emission.outbound_msg_id`, never by an `emission_id` column | PIX/PSX/PPX deliberately dropped CIX's emission FK. CRG's three correlation paths collapse to two here (see below). |
 | 4 | No `man_collection_outcome` view | The mandate gate is DC-only (R-19). A payment carries no bank-registered mandate, so there is nothing for MSR to read here. `tx_entry.mandate_ref` exists in the shared physical layout and is expected NULL on every ENDO row. |
-| 5 | Paketo `bootBuildImage`, no Dockerfile | Estate mandate. A brand-new repo with no published image is the cheapest adoption point, as PRR/PRW/PIX/PSX/PPX each concluded. |
+| 5 | Paketo `bootBuildImage`, no Dockerfile | Estate mandate (`rules/be/java/build.md`, "Container images: Paketo buildpacks, ALWAYS", non-negotiable). A brand-new repo with no published image is the cheapest adoption point, as PRR/PRW/PIX/PSX/PPX each concluded. **Re-measured 2026-09-11:** all five still carry `bootBuildImage` and no `Dockerfile`, and `pai` is the one payments service that does the opposite, shipping a hand-rolled `eclipse-temurin:25-jre-alpine` Dockerfile and no `bootBuildImage`. This is a cross-repo claim and the siblings move without touching this file, so re-derive it rather than trusting it: `for d in ../*/; do [ -f "$d/Dockerfile" ] && echo "$d"; done`. |
 | 6 | `prg_report.type`, not `prg_report.report_type` | A column never repeats its own table name. A v1 baseline on an empty database is the only moment this is free. This is the one difference that is a choice rather than a consequence. |
 
 ### The correlation change, in detail
@@ -158,22 +158,31 @@ END|0
 ## Database
 
 Liquibase, pure XML, per-service history tables (`prg_databasechangelog` / `...lock`) on the shared
-`dcre_pay` database. Calendar layout under `db/changelog/2026/08/`.
+`dcre_pay` database. Calendar layout under `db/changelog/2026/08/` and `db/changelog/2026/09/`;
+the root master includes MONTHS, never individual changesets.
 
 **This is a V1 BASELINE, not a port of CRG's history.** Every DCRE database is being dropped and cut
 over directly, so there is no historic state to migrate and no deployed schema to protect. Each
 object is declared once in its final shape, and the re-run guards CRG's 53-changeset history needed
-are absent on purpose: no `validCheckSum ANY` on schema this project designs, no `MARK_RAN`
-preconditions over objects that cannot exist on an empty database, no defensive `IF NOT EXISTS`
-retrofits. `DATABASECHANGELOG` is what makes a re-run safe from a clean baseline, and
-`OrderingContractIT` executes that claim rather than asserting it. There are no exceptions left:
-the batch metadata was the last one and became typed tags on 2026-08-08.
+were absent on purpose: `DATABASECHANGELOG` is what makes a re-run safe from a clean baseline, and
+`OrderingContractIT` executes that claim rather than asserting it.
+
+**That is no longer the whole truth, and the gap is what defect 2 below was made of.** The A-82
+retrofit added a re-run guard to `002-pay-reporting.xml` after those changesets had already been
+applied somewhere, so as of 2026-09-11 all **10** of its changesets carry both
+`<validCheckSum>ANY</validCheckSum>` and an `onFail="MARK_RAN"` precondition (count the
+`<changeSet` and `onFail="MARK_RAN"` occurrences in that file; they are equal). A `MARK_RAN` guard
+that tests `tableExists` asserts a NAME and says nothing about COLUMNS, which is precisely how a
+stale `prg_report` was certified as current: the guard fired, the `createTable` was recorded as
+applied, the migration reported success, and the column drift became permanent and silent. Read
+those guards as a repair mechanism with a known blind spot, not as the baseline's design.
 
 | File | Contents |
 |---|---|
 | `002-pay-reporting.xml` | `prg_status_class` (+14 seeded codes), `prg_watermark`, `prg_report`, `prg_delivery_ledger`, and PRG's read-path indexes on relations it reads |
 | `003-pay-status-views.xml` | `prg_isr_pick` / `prg_sbsr_pick` / `prg_pbsr_pick`, `ext_tx_status`, `prg_member_status`, `prg_report_due`, `prg_sla_pending`, `prg_status_exception` |
 | `004-batch-metadata.xml` | Spring Batch 6 metadata under prefix `PRG_BATCH_` |
+| `2026/09/001-report-type-rename.xml` | Repair: renames `prg_report.report_type` to `type` on a database that predates the v1 spelling. Guarded on `columnExists report_type`, so it RUNS on a stale database and `MARK_RAN`s on a fresh one; both states converge on `type` |
 
 ### The ordering contract (2026-08-08)
 

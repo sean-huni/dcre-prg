@@ -71,4 +71,10 @@
     -->
     <include file="db/changelog/2026/08/db.changelog-2026-08.xml"/>
 
+    <!-- 2026/09 carries REPAIRS, and runs LAST for that reason: each of its changesets is
+         written against the state 2026/08 leaves behind, and reads the shape of the object it
+         repairs rather than trusting the name. See the file itself for which database states
+         it converges. -->
+    <include file="db/changelog/2026/09/db.changelog-2026-09.xml"/>
+
 </databaseChangeLog>
