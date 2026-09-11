@@ -10,8 +10,17 @@
 
          THIS IS THE VERSION 1 BASELINE. Every DCRE database is dropped and recreated
          at the v1 cutover, so this changelog only ever runs against an EMPTY schema.
-         That is why the usual re-run guards are absent, and their absence is
-         deliberate rather than an oversight:
+         THAT PREMISE DID NOT HOLD. Measured on the stage cluster 2026-09-11, dcre_pay still
+         carried all six PRG_BATCH_ tables and all three PRG_BATCH_ sequences from the
+         pre-v1 mechanism, while prg_databasechangelog listed none of the changeset ids
+         below. That is the state in which Liquibase issues CREATE TABLE against an existing
+         relation, the Spring context fails and the pod exits 78, observed live on CRW. The
+         PRG pod has not been seen reaching THIS changeset: it currently fails earlier on
+         "relation dcre_pay.public.prg_status_class already exists", a defect in 002/003
+         that this changelog does not touch. Every changeset below now carries an
+         onFail="MARK_RAN" re-run guard on the exact object it creates, per the estate
+         standard. Of the two decisions recorded here, one still holds and one is
+         superseded:
 
            - no ANY-checksum override. It existed because the SQL file behind this
              changeset was edited after it had executed on live databases, so its
@@ -19,11 +28,26 @@
              history there is no checksum to contradict, and suppressing checksum
              validation on a baseline would only disarm the control for every FUTURE
              edit.
-           - no IF-NOT-EXISTS clauses, and no onFail="MARK_RAN" preconditions. Both
-             guarded against objects created by an earlier, different changelog. On an
-             empty schema every CREATE here is the first and only one, so a guard
-             could not fire, and a guard that cannot fire is dead weight that would
-             silently skip real work if the assumption ever changed.
+           - SUPERSEDED: still no IF-NOT-EXISTS clauses, but every changeset now carries
+             an onFail="MARK_RAN" precondition. The guard does fire, because the objects
+             created by that earlier, different changelog are still present. A typed
+             precondition is the right form for it: dialect-neutral, visible to static
+             analysis, and it records MARK_RAN so the changeset is never re-attempted. Each
+             table changeset guards on its OWN table, and the unique or foreign-key
+             constraint that changeset also adds was created together with that table by the
+             older DDL, so marking the table changeset run skips nothing that is missing
+             (measured on the stage cluster: every batch table present carries its
+             constraint, 72 of 72 in dcre_col, 12 of 12 in dcre_pay, 60 of 60 in dcre_man).
+             The one changeset that creates three sequences guards all three under a single
+             not/and, so it is marked run only when the whole set is already present. A
+             partially created set therefore still runs, and it completes rather than
+             colliding, because Liquibase renders createSequence as CREATE SEQUENCE IF NOT
+             EXISTS on this database. Measured 2026-09-11 on a scratch CockroachDB: dropped
+             one of the three sequences, erased the history rows, re-ran; the six table
+             changesets went MARK_RAN, the sequence changeset EXECUTED, the set returned to
+             three, exit 0. The table changesets resume the same way one object at a time:
+             dropping one table and re-running marked the other five run and recreated only
+             the missing one.
 
          Pure typed tags, no raw-SQL body and no external SQL file (2026-08-08, family
          consistency with CRG, which made this conversion first and which PRG was forked
@@ -46,6 +70,9 @@
          ============================================================================ -->
 
     <changeSet id="prg-v1-batch-job-instance" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><tableExists tableName="PRG_BATCH_JOB_INSTANCE"/></not>
+        </preConditions>
         <createTable tableName="PRG_BATCH_JOB_INSTANCE">
             <column name="JOB_INSTANCE_ID" type="BIGINT">
                 <constraints primaryKey="true" nullable="false"/>
@@ -66,6 +93,9 @@
     </changeSet>
 
     <changeSet id="prg-v1-batch-job-execution" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><tableExists tableName="PRG_BATCH_JOB_EXECUTION"/></not>
+        </preConditions>
         <createTable tableName="PRG_BATCH_JOB_EXECUTION">
             <column name="JOB_EXECUTION_ID" type="BIGINT">
                 <constraints primaryKey="true" nullable="false"/>
@@ -93,6 +123,9 @@
     </changeSet>
 
     <changeSet id="prg-v1-batch-job-execution-params" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><tableExists tableName="PRG_BATCH_JOB_EXECUTION_PARAMS"/></not>
+        </preConditions>
         <createTable tableName="PRG_BATCH_JOB_EXECUTION_PARAMS">
             <column name="JOB_EXECUTION_ID" type="BIGINT">
                 <constraints nullable="false"/>
@@ -117,6 +150,9 @@
     </changeSet>
 
     <changeSet id="prg-v1-batch-step-execution" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><tableExists tableName="PRG_BATCH_STEP_EXECUTION"/></not>
+        </preConditions>
         <createTable tableName="PRG_BATCH_STEP_EXECUTION">
             <column name="STEP_EXECUTION_ID" type="BIGINT">
                 <constraints primaryKey="true" nullable="false"/>
@@ -157,6 +193,9 @@
     </changeSet>
 
     <changeSet id="prg-v1-batch-step-execution-context" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><tableExists tableName="PRG_BATCH_STEP_EXECUTION_CONTEXT"/></not>
+        </preConditions>
         <createTable tableName="PRG_BATCH_STEP_EXECUTION_CONTEXT">
             <column name="STEP_EXECUTION_ID" type="BIGINT">
                 <constraints primaryKey="true" nullable="false"/>
@@ -175,6 +214,9 @@
     </changeSet>
 
     <changeSet id="prg-v1-batch-job-execution-context" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><tableExists tableName="PRG_BATCH_JOB_EXECUTION_CONTEXT"/></not>
+        </preConditions>
         <createTable tableName="PRG_BATCH_JOB_EXECUTION_CONTEXT">
             <column name="JOB_EXECUTION_ID" type="BIGINT">
                 <constraints primaryKey="true" nullable="false"/>
@@ -193,6 +235,21 @@
     </changeSet>
 
     <changeSet id="prg-v1-batch-sequences" author="dcre">
+        <!-- RE-RUN GUARD: all three sequences under ONE not/and, so this changeset is marked
+             run only when the WHOLE set is already present. A partially created set still runs
+             and completes: Liquibase renders createSequence as CREATE SEQUENCE IF NOT EXISTS on
+             this database, so the survivors are left alone and only the missing one is created
+             (measured 2026-09-11: dropped one of three, erased history, re-ran; EXECUTED, set
+             back to three, exit 0). -->
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <and>
+                    <sequenceExists sequenceName="PRG_BATCH_STEP_EXECUTION_SEQ"/>
+                    <sequenceExists sequenceName="PRG_BATCH_JOB_EXECUTION_SEQ"/>
+                    <sequenceExists sequenceName="PRG_BATCH_JOB_INSTANCE_SEQ"/>
+                </and>
+            </not>
+        </preConditions>
         <createSequence sequenceName="PRG_BATCH_STEP_EXECUTION_SEQ" maxValue="9223372036854775807" cycle="false"/>
         <createSequence sequenceName="PRG_BATCH_JOB_EXECUTION_SEQ" maxValue="9223372036854775807" cycle="false"/>
         <createSequence sequenceName="PRG_BATCH_JOB_INSTANCE_SEQ" maxValue="9223372036854775807" cycle="false"/>
