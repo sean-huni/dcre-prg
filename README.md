@@ -252,6 +252,7 @@ PRR as their only creator (checked 2026-09-28).
   `api`-exposes the previous), and in `dcre-platform-persistence` (standalone)
 - A reachable CockroachDB and exchange directory for a real run (the `dcre-infra` kind cluster
   locally)
+- The `dcre_pay` database must be created by hand (`CREATE DATABASE IF NOT EXISTS dcre_pay;`): dcre-infra's `scripts/crdb-init.sql` creates only `dcre_col`, `agt_ops` and `dcre_man` (checked 2026-09-28).
 
 ## Quickstart
 
