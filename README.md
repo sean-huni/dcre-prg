@@ -1,5 +1,7 @@
 # dcre-prg
 
+> Part of the DCRE fleet. For the fleet map, the rulings and the diagrams that specify every stage, start at the [DCRE design register](https://github.com/sean-huni/dcre-design-register); the complete list of live repositories is its [Repositories](https://github.com/sean-huni/dcre-design-register#repositories) table.
+
 Payment Report Generator: the clock-windowed status reporter that terminates the DCRE **ENDO
 payments** response leg. Sheet: `design-register/docs/diagrams/dcre-payments-res.png`.
 
@@ -11,13 +13,24 @@ Fint Resp ──▶ PARALLEL ──▶ [PIX] ──▶ isr_resp   ┐
 
 ## What it does
 
+| | |
+| --- | --- |
+| Stage code | `PRG` (AGT `Stage.PRG`; before the 2026-08-08 cutover this token named the collections generator, now `CRG`) |
+| Family / leg | payments (ENDO), RES |
+| Trigger | clock-launched (AGT `PrgScheduler`, one window per payments client), plus arrival-scoped IMMEDIATE reports from AGT's `prg_report_due` scan |
+| Upstream | `PIX`, `PSX`, `PPX` (through `isr_resp` / `sbsr_resp` / `pbsr_resp`), with the spine, `validation_log` and `prw_emission*` |
+| Downstream | none in the DAG: PSR files for OnHost in `<client>/onhost-resp/out` |
+| Diagram sheet | `dcre-payments-res` in the design register |
+
 PRG projects per-transaction external status (`ext_tx_status`, over the payments spine, PTV
 verdicts and the ISR/SBSR/PBSR response legs, deepest leg wins per R-17) and emits delta Payment
 Status Report (PSR) files per client on clock windows. Each run diffs `ext_tx_status` against
 `prg_watermark` for one client, streams the delta as a PSR flat file into that client's
 `onhost-resp/out` exchange directory, then advances the watermark in bounded slices. It is not
 file-triggered: AGT's clock instantiates `prgJob` per (client, window) as a short-lived Kubernetes
-Job, and PRG reports whatever `ext_tx_status` holds behind the watermark. The owner's statement of
+Job, and PRG reports whatever `ext_tx_status` holds behind the watermark. AGT also scans
+`dcre_pay.prg_report_due` and launches one IMMEDIATE report per due parent (AGT `ReportTrigger`,
+checked 2026-09-28). The owner's statement of
 intent is "PRG generates all the reports for all the clients at specified times (of when they
 prefer to receive their Payment Reports)"; the window interval is that clock.
 
@@ -25,7 +38,7 @@ prefer to receive their Payment Reports)"; the window interval is that clock.
 DC Collections flow has its own report generator, `crg`, against `dcre_col`. One service serving
 both flows was the SOLID violation the family split exists to remove.
 
-## Forked from `collections/crg`, and everything that differs
+### Forked from `collections/crg`, and everything that differs
 
 Family consistency is the rule: a payments service copies the collections sibling that already
 solves the job, and every structural difference carries the burden of proof. There are six, and
@@ -40,7 +53,7 @@ all but one are forced by decisions other payments services already made.
 | 5 | Paketo `bootBuildImage`, no Dockerfile | Estate mandate. A brand-new repo with no published image is the cheapest adoption point, as PRR/PRW/PIX/PSX/PPX each concluded. |
 | 6 | `prg_report.type`, not `prg_report.report_type` | A column never repeats its own table name. A v1 baseline on an empty database is the only moment this is free. This is the one difference that is a choice rather than a consequence. |
 
-### The correlation change, in detail
+#### The correlation change, in detail
 
 CRG resolves a reply to its outbound batch three ways, in precedence order: a resolved
 `emission_id` column, a legacy arm binding `orgnl_msg_id = crw_emission.outbound_msg_id`, and a
@@ -85,6 +98,10 @@ sibling has is exactly the local cleverness that produces drift.
   never `UPSERT INTO` (CRDB arbitrates UPSERT on the primary key only; the business identity is
   (client, e2e)). Serialization aborts (40001) retry up to 5 attempts with jittered backoff in a
   fresh transaction per attempt.
+- **READ COMMITTED on the main pool** (`spring.datasource.hikari.transaction-isolation`, SCRUM-90):
+  concurrent report windows otherwise collide at the Batch JobRepository commit with an uncatchable
+  40001. Writes stay zero-duplicate because both are full-identity guarded (`prg_watermark` on
+  `(client, e2e)`, the `uq_prg_ledger_auto` partial index).
 - **Bounded scale (SCRUM-42)**: whole-book reads plus a full in-heap render blew CRDB's sql memory
   budget on the 30M-tx book. Every read is a keyset slice (`ORDER BY e2e LIMIT :limit`, default
   50000) and the PSR streams to disk slice by slice; nothing holds more than one slice in heap.
@@ -114,7 +131,10 @@ occurred.
 
 ### Job contract
 
-One job `prgJob`, one tasklet step `psrStep`.
+One job `prgJob`, one tasklet step `psrStep`. Identifying parameters: `client`, `window`. The
+non-identifying `report.type` selects the path (`PsrTasklet`): `SCHEDULED` (default, below),
+`IMMEDIATE` (one ledger-guarded report per entry of `parents`), or `MANUAL` (replay of `report.id`
+when set, else regenerate `parents` from current status with `manual.ref`).
 
 - Scheduled run: delta selection, reportable rows whose `ext_tx_status.status` moved past
   `prg_watermark.last_status` (or have no watermark row yet). Unknown response codes are excluded.
@@ -155,7 +175,11 @@ END|0
   or the watermark: nothing was externally reported. Only the SCHEDULED path heartbeats;
   IMMEDIATE/MANUAL no-ops stay file-less.
 
-## Database
+### Database
+
+Datasources: `DCRE_DB_URL` / `DCRE_DB_USER` / `DCRE_DB_PASSWORD` (`dcre_pay`), and
+`DCRE_AGTOPS_DB_URL` / `_USER` / `_PASSWORD` (`agt_ops`, `HeartbeatWriter` liveness stamp only).
+PRG never opens `dcre_col`.
 
 Liquibase, pure XML, per-service history tables (`prg_databasechangelog` / `...lock`) on the shared
 `dcre_pay` database. Calendar layout under `db/changelog/2026/08/`.
@@ -175,7 +199,7 @@ the batch metadata was the last one and became typed tags on 2026-08-08.
 | `003-pay-status-views.xml` | `prg_isr_pick` / `prg_sbsr_pick` / `prg_pbsr_pick`, `ext_tx_status`, `prg_member_status`, `prg_report_due`, `prg_sla_pending`, `prg_status_exception` |
 | `004-batch-metadata.xml` | Spring Batch 6 metadata under prefix `PRG_BATCH_` |
 
-### The ordering contract (2026-08-08)
+#### The ordering contract (2026-08-08)
 
 PRG reads nine relations it does not own and **creates none of them**: `tx_header` + `tx_entry`
 (PRR), `validation_log` (PTV), `isr_resp` / `sbsr_resp` / `pbsr_resp` (PIX / PSX / PPX), and
@@ -207,14 +231,11 @@ still a hand-maintained mirror of other repositories' DDL, so `BootstrapSourcePa
 owners' changelogs off disk and compares them column by column and constraint by constraint. It
 runs only inside the monorepo working tree and says so when it skips.
 
-**Dependency worth naming:** `payments/pai` currently runs its Liquibase against `dcre_col` and
-creates `account`, `tx_header`, `tx_entry` and `pai_verdict` there. PRG reads `tx_header` and
-`tx_entry` in `dcre_pay` and depends on PRR creating them, not PAI; but until PAI's datasource is
-corrected, the payments database's spine has an owner writing into the wrong database, and that fix
-is a precondition for the ordering contract above being true in the cluster rather than only in the
-tests.
+PAI no longer interferes with this contract: it defaults to `dcre_pay` and its changelog creates
+only `pai_verdict`, `unknown_creditor` and its batch metadata, so `tx_header` and `tx_entry` have
+PRR as their only creator (checked 2026-09-28).
 
-### Platform library dependencies (mavenLocal, 0.1.0)
+#### Platform library dependencies (mavenLocal, 0.1.0)
 
 | Module | Used for |
 |---|---|
@@ -263,7 +284,10 @@ Precedence: yml default < environment variable. All defaults are committed in `a
 | `DCRE_AMOUNT_SCALE` | `2` | Fleet-wide flag; not read by PRG sources |
 | `DCRE_V1_ENABLED` | `false` | Fleet-wide flag; not read by PRG sources |
 | `DCRE_FLOW_DC` | `false` | Fleet-wide flag; not read by PRG sources. `false` here because PRG is the ENDO leg |
-| `JOB_NAME` | `local-<executionId>` | K8s-injected identity for the outcome seam |
+| `JOB_NAME` | `local-prg-<executionId>` | K8s-injected identity for the outcome seam and `prg_report.job_name` |
+
+This table is the documented set, not a closed total: Spring Boot relaxed binding lets any property
+be overridden by its environment-variable form.
 
 Per-client exchange directories bind from the `dcre-exchange-layout.yml` classpath resource
 (shipped in `platform-batch`, imported via `spring.config.import`); Batch metadata uses table
@@ -307,6 +331,9 @@ Testcontainers CockroachDB `cockroachdb/cockroach:v26.2.3` (Docker required).
 - `ConfigPlaceholderBindingTest`: every `${dcre.*}` placeholder in main sources resolves against the
   committed yml, the inherited `dcre.crg` prefix is gone from both sides, and the relative
   exchange-root default keeps its six-level depth.
+- `JobNameCaptureIT`: a SCHEDULED delta, a HEARTBEAT window and an IMMEDIATE report each persist
+  `prg_report.job_name` equal to the run's resolved job name, in the same transaction (SCRUM-58).
+- `AgtWireContractTest`: PRG reads the `DCRE_DB_URL` name AGT injects. One-sided: it cannot see AGT.
 - Cucumber BDD suite: `src/test/resources/features/psr-window-projection.feature`.
 
 ## Local cluster deployment
@@ -316,15 +343,27 @@ Testcontainers CockroachDB `cockroachdb/cockroach:v26.2.3` (Docker required).
 kind load docker-image --name dcre-dev dcre-prg:2.0
 ```
 
-**AGT is not yet wired for this service and PRG cannot run in-cluster until it is.** `Stage.PRG`
-exists in AGT today but points at the COLLECTIONS report generator image against `dcre_col`, for
-both flows, which is the coupling this split removes. The required AGT changes are listed in the
-SCRUM-107 handover and are deliberately not made from this repository: several agents edit AGT in
-one pass, and concurrent edits have already caused conflicts twice on this project.
+```bash
+kubectl set env -n dcre deploy/dcre-agt AGT_PRG_IMAGE=dcre-prg:2.0
+```
 
-Fleet version switching: `dcre-infra` `scripts/switch-version.sh`; cluster bring-up:
-`scripts/kind-up.sh` (kind cluster `dcre-dev`); clean slate: `scripts/env-reset.sh`. Topology gate:
-`scripts/verify-topology.sh`.
+AGT on `origin/dev` (checked 2026-09-28) is wired for this service: `AGT_PRG_IMAGE` names the
+PAYMENTS generator, and payments stage Jobs get the `dcre_pay` URL. Two launch paths, both in the
+`dcre-pay` namespace:
+
+- **Clock windows** (`PrgScheduler`): every payments client (`AGT_PAY_CLIENTS`) gets a window per
+  `AGT_PRG_INTERVAL_SECONDS` (default 60); args `client=<CLIENT>` and `window=w<n>`.
+- **IMMEDIATE reports** (`ReportTrigger`): every `AGT_REPORT_SCAN_SECONDS` (default 15) AGT reads
+  `dcre_pay.prg_report_due` and launches one arrival-scoped report per due parent; args `client`,
+  `window=imm-<digest>`, `report.type=IMMEDIATE` and `parents=<sourceMsgId>`.
+
+Env on every Job: `JOB_NAME`, `DCRE_DB_URL`, `DCRE_EXCHANGE_ROOT=/exchange`, `DCRE_AGTOPS_DB_URL`,
+`DCRE_AGTOPS_DB_USER`. An empty `AGT_PRG_IMAGE` disables both paths.
+
+Cluster bring-up: `dcre-infra` `scripts/kind-up.sh` (kind cluster `dcre-dev`); clean slate:
+`scripts/env-reset.sh`. `scripts/switch-version.sh` exports `AGT_PRG_IMAGE=dcre-prg:<version>`
+but its roster predates the payments split and omits every other payments stage (checked
+2026-09-28).
 
 ## Related repositories
 
